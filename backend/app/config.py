@@ -9,6 +9,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     app_env: Literal["development", "testing", "production"] = "development"
     database_url: str | None = None
+    test_database_url: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_DIR / ".env",
