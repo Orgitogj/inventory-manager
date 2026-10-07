@@ -2,7 +2,7 @@ import click
 from flask import Flask, current_app
 from sqlalchemy import Engine, MetaData, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -11,6 +11,10 @@ NAMING_CONVENTION = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
+
+
+class DatabaseNotConfiguredError(RuntimeError):
+    pass
 
 
 class Base(DeclarativeBase):
@@ -24,6 +28,15 @@ def get_engine() -> Engine:
         raise RuntimeError("Database is not configured.")
 
     return engine
+
+
+def get_session_factory() -> sessionmaker[Session]:
+    session_factory = current_app.extensions.get("database_sessionmaker")
+
+    if session_factory is None:
+        raise DatabaseNotConfiguredError("Database is not configured.")
+
+    return session_factory
 
 
 @click.command("db-check")
@@ -53,5 +66,6 @@ def init_database(app: Flask) -> None:
             connect_args={"connect_timeout": 5},
         )
         app.extensions["database_engine"] = engine
+        app.extensions["database_sessionmaker"] = sessionmaker(bind=engine)
 
     app.cli.add_command(db_check)
