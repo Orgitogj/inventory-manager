@@ -15,3 +15,8 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "db: tests that need the PostgreSQL test database (TEST_DATABASE_URL)",
+]
