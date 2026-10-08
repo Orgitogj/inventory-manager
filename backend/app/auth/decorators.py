@@ -7,6 +7,7 @@ from flask import current_app, g, request
 from app.auth.service import find_active_session
 from app.database import get_db
 from app.errors import error_response
+from app.users.models import UserRole
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 CSRF_HEADER = "X-CSRF-Token"
@@ -31,3 +32,21 @@ def login_required[**P, R](view: Callable[P, R]) -> Callable[P, R]:
         return view(*args, **kwargs)
 
     return wrapper
+
+
+def require_role(*roles: UserRole):
+    allowed_roles = frozenset(roles)
+
+    def decorator[**P, R](view: Callable[P, R]) -> Callable[P, R]:
+        @wraps(view)
+        def wrapper(*args: P.args, **kwargs: P.kwargs):
+            if g.current_user.role not in allowed_roles:
+                return error_response(
+                    "forbidden", "You do not have permission to do this.", 403
+                )
+
+            return view(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
