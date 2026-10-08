@@ -1,5 +1,5 @@
 import click
-from flask import Flask, current_app
+from flask import Flask, current_app, g
 from sqlalchemy import Engine, MetaData, create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -39,6 +39,20 @@ def get_session_factory() -> sessionmaker[Session]:
     return session_factory
 
 
+def get_db() -> Session:
+    if "db_session" not in g:
+        g.db_session = get_session_factory()()
+
+    return g.db_session
+
+
+def close_db(_exception: BaseException | None = None) -> None:
+    db_session = g.pop("db_session", None)
+
+    if db_session is not None:
+        db_session.close()
+
+
 @click.command("db-check")
 def db_check():
     try:
@@ -68,4 +82,5 @@ def init_database(app: Flask) -> None:
         app.extensions["database_engine"] = engine
         app.extensions["database_sessionmaker"] = sessionmaker(bind=engine)
 
+    app.teardown_appcontext(close_db)
     app.cli.add_command(db_check)

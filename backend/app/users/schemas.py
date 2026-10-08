@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from pydantic import (
@@ -33,6 +34,15 @@ class StaffCreate(BaseModel):
     @classmethod
     def _strip_email(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    email: str
+    full_name: str
+    role: UserRole
 
 
 def describe_validation_error(error: ValidationError) -> str:
