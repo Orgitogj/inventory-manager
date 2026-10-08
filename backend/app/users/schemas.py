@@ -2,20 +2,37 @@ import uuid
 from typing import Annotated
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     EmailStr,
-    Field,
     SecretStr,
     StringConstraints,
     ValidationError,
     field_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from app.users.models import UserRole
 
 PASSWORD_MIN_LENGTH = 12
 PASSWORD_MAX_LENGTH = 128
+
+
+def _check_password_length(value: SecretStr) -> SecretStr:
+    length = len(value.get_secret_value())
+
+    if not PASSWORD_MIN_LENGTH <= length <= PASSWORD_MAX_LENGTH:
+        raise PydanticCustomError(
+            "password_length",
+            "Password must be between {min_length} and {max_length} characters.",
+            {"min_length": PASSWORD_MIN_LENGTH, "max_length": PASSWORD_MAX_LENGTH},
+        )
+
+    return value
+
+
+Password = Annotated[SecretStr, AfterValidator(_check_password_length)]
 
 
 class StaffCreate(BaseModel):
@@ -25,9 +42,7 @@ class StaffCreate(BaseModel):
     full_name: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
     ]
-    password: SecretStr = Field(
-        min_length=PASSWORD_MIN_LENGTH, max_length=PASSWORD_MAX_LENGTH
-    )
+    password: Password
     role: UserRole
 
     @field_validator("email", mode="before")

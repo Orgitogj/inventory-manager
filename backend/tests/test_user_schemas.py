@@ -53,6 +53,21 @@ def test_invalid_input_is_rejected(field, value):
     assert error_fields(error.value) == {field}
 
 
+@pytest.mark.parametrize("password", ["x" * 11, "x" * 129])
+def test_password_length_error_has_a_clear_message(password):
+    with pytest.raises(ValidationError) as error:
+        make(password=password)
+
+    assert describe_validation_error(error.value) == (
+        "password: Password must be between 12 and 128 characters."
+    )
+
+
+@pytest.mark.parametrize("password", ["x" * 12, "x" * 128])
+def test_password_length_limits_are_inclusive(password):
+    assert make(password=password).password.get_secret_value() == password
+
+
 def test_unknown_fields_are_rejected():
     with pytest.raises(ValidationError) as error:
         make(is_active=False)
