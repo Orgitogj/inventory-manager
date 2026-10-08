@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.users.models import UserRole
-from app.users.schemas import StaffCreate, describe_validation_error
+from app.users.schemas import StaffCreate, StaffUpdate, describe_validation_error
 
 VALID = {
     "email": "ana@example.com",
@@ -51,6 +51,47 @@ def test_invalid_input_is_rejected(field, value):
         make(**{field: value})
 
     assert error_fields(error.value) == {field}
+
+
+@pytest.mark.parametrize("password", ["x" * 11, "x" * 129])
+def test_password_length_error_has_a_clear_message(password):
+    with pytest.raises(ValidationError) as error:
+        make(password=password)
+
+    assert describe_validation_error(error.value) == (
+        "password: Password must be between 12 and 128 characters."
+    )
+
+
+@pytest.mark.parametrize("password", ["x" * 12, "x" * 128])
+def test_password_length_limits_are_inclusive(password):
+    assert make(password=password).password.get_secret_value() == password
+
+
+def test_staff_update_accepts_any_subset_of_fields():
+    data = StaffUpdate(full_name="  Ana  ", is_active=False)
+
+    assert data.model_dump(exclude_unset=True) == {
+        "full_name": "Ana",
+        "is_active": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({}, "body"),
+        ({"role": None}, "role"),
+        ({"is_active": 1}, "is_active"),
+        ({"full_name": ""}, "full_name"),
+        ({"email": "new@example.com"}, "email"),
+    ],
+)
+def test_staff_update_rejects_invalid_input(payload, field):
+    with pytest.raises(ValidationError) as error:
+        StaffUpdate.model_validate(payload)
+
+    assert describe_validation_error(error.value).startswith(f"{field}:")
 
 
 def test_unknown_fields_are_rejected():

@@ -1,10 +1,11 @@
 import hashlib
 import secrets
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.auth.models import UserSession
@@ -81,3 +82,7 @@ def find_active_session(session: Session, token: str) -> UserSession | None:
 def end_session(session: Session, user_session: UserSession) -> None:
     session.delete(user_session)
     session.flush()
+
+
+def end_all_sessions(session: Session, user_id: uuid.UUID) -> None:
+    session.execute(delete(UserSession).where(UserSession.user_id == user_id))

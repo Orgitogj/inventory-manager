@@ -7,6 +7,7 @@ from app.config import Settings
 from app.database import init_database
 from app.health.routes import health_bp
 from app.users.cli import create_admin
+from app.users.routes import users_bp
 
 
 def create_app(settings: Settings | None = None) -> Flask:
@@ -26,6 +27,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     init_database(app)
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
+    app.register_blueprint(users_bp)
     app.cli.add_command(create_admin)
 
     return app
