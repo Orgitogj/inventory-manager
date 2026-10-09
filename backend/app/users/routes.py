@@ -1,8 +1,9 @@
 import uuid
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, g, jsonify
 from pydantic import ValidationError
 
+from app.api import request_payload, validation_error_response
 from app.auth.decorators import login_required, require_role
 from app.database import get_db
 from app.errors import error_response
@@ -11,7 +12,6 @@ from app.users.schemas import (
     StaffCreate,
     StaffOut,
     StaffUpdate,
-    validation_error_details,
 )
 from app.users.service import (
     EmailAlreadyExistsError,
@@ -28,17 +28,6 @@ users_bp = Blueprint("users", __name__, url_prefix="/api/v1/users")
 
 def staff_json(user: User) -> dict:
     return StaffOut.model_validate(user).model_dump(mode="json")
-
-
-def request_payload() -> object:
-    payload = request.get_json(silent=True)
-    return {} if payload is None else payload
-
-
-def validation_error_response(error: ValidationError):
-    return error_response(
-        "validation_error", "Invalid input.", 422, validation_error_details(error)
-    )
 
 
 def not_found_response():
