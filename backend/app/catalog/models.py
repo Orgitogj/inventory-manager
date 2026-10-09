@@ -21,3 +21,24 @@ class Category(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+    __table_args__ = (
+        CheckConstraint("name = btrim(name) AND name <> ''", name="name_trimmed"),
+        CheckConstraint(
+            "email IS NULL OR email = lower(btrim(email))", name="email_normalized"
+        ),
+        Index("uq_suppliers_name_lower", text("lower(name)"), unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320))
+    phone: Mapped[str | None] = mapped_column(String(50))
+    notes: Mapped[str | None] = mapped_column(String(1000))
+    is_archived: Mapped[bool] = mapped_column(server_default=false())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
