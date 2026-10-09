@@ -3,7 +3,7 @@ from datetime import timedelta
 from flask import Flask
 
 from app.auth.routes import auth_bp
-from app.catalog.routes import categories_bp, suppliers_bp
+from app.catalog.routes import categories_bp, products_bp, suppliers_bp
 from app.config import Settings
 from app.database import init_database
 from app.health.routes import health_bp
@@ -31,6 +31,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(users_bp)
     app.register_blueprint(categories_bp)
     app.register_blueprint(suppliers_bp)
+    app.register_blueprint(products_bp)
     app.cli.add_command(create_admin)
 
     return app
