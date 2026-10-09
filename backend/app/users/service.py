@@ -1,12 +1,11 @@
 import uuid
 
 from sqlalchemy import exists, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.passwords import hash_password
 from app.auth.service import end_all_sessions
-from app.database import violated_constraint
+from app.database import translate_unique_violation
 from app.users.models import User, UserRole
 from app.users.schemas import StaffCreate, StaffUpdate
 
@@ -41,13 +40,13 @@ def create_user(session: Session, data: StaffCreate) -> User:
         role=data.role,
     )
 
-    try:
-        with session.begin_nested():
-            session.add(user)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_EMAIL_CONSTRAINT:
-            raise EmailAlreadyExistsError(user.email) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_EMAIL_CONSTRAINT, lambda: EmailAlreadyExistsError(user.email)
+        ),
+        session.begin_nested(),
+    ):
+        session.add(user)
 
     return user
 
