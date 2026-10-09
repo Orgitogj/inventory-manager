@@ -1,3 +1,6 @@
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+
 import click
 from flask import Flask, current_app, g
 from sqlalchemy import Engine, MetaData, create_engine, text
@@ -24,6 +27,18 @@ class Base(DeclarativeBase):
 def violated_constraint(error: IntegrityError) -> str | None:
     diag = getattr(error.orig, "diag", None)
     return getattr(diag, "constraint_name", None)
+
+
+@contextmanager
+def translate_unique_violation(
+    constraint: str, error_factory: Callable[[], Exception]
+) -> Iterator[None]:
+    try:
+        yield
+    except IntegrityError as error:
+        if violated_constraint(error) == constraint:
+            raise error_factory() from None
+        raise
 
 
 def get_engine() -> Engine:
