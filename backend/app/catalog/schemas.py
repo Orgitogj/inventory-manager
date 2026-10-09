@@ -3,9 +3,11 @@ from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    EmailStr,
     StrictBool,
     StringConstraints,
     field_validator,
@@ -28,6 +30,10 @@ def _reject_null(value: object) -> object:
     return value
 
 
+def _lowercase(value: str | None) -> str | None:
+    return value.lower() if value is not None else None
+
+
 def _required_name(max_length: int):
     return Annotated[
         str,
@@ -44,6 +50,13 @@ def _optional_text(max_length: int):
 
 CategoryName = _required_name(100)
 Description = _optional_text(500)
+
+SupplierName = _required_name(200)
+SupplierEmail = Annotated[
+    EmailStr | None, BeforeValidator(_blank_to_none), AfterValidator(_lowercase)
+]
+Phone = _optional_text(50)
+Notes = _optional_text(1000)
 
 
 class _UpdateModel(BaseModel):
@@ -82,5 +95,38 @@ class CategoryOut(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
+    is_archived: bool
+    created_at: datetime
+
+
+class SupplierCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: SupplierName
+    email: SupplierEmail = None
+    phone: Phone = None
+    notes: Notes = None
+
+
+class SupplierUpdate(_UpdateModel):
+    name: SupplierName | None = None
+    email: SupplierEmail = None
+    phone: Phone = None
+    notes: Notes = None
+    is_archived: StrictBool | None = None
+
+    _required_fields_not_null = field_validator("name", "is_archived", mode="before")(
+        _reject_null
+    )
+
+
+class SupplierOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    email: str | None
+    phone: str | None
+    notes: str | None
     is_archived: bool
     created_at: datetime
