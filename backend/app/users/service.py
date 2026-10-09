@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.passwords import hash_password
 from app.auth.service import end_all_sessions
+from app.database import violated_constraint
 from app.users.models import User, UserRole
 from app.users.schemas import StaffCreate, StaffUpdate
 
@@ -26,11 +27,6 @@ class SelfModificationError(Exception):
 class LastAdminError(Exception):
     def __init__(self) -> None:
         super().__init__("The last active admin cannot be demoted or deactivated.")
-
-
-def violated_constraint(error: IntegrityError) -> str | None:
-    diag = getattr(error.orig, "diag", None)
-    return getattr(diag, "constraint_name", None)
 
 
 def admin_exists(session: Session) -> bool:

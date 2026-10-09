@@ -14,7 +14,7 @@ from app.catalog.schemas import (
     SupplierCreate,
     SupplierUpdate,
 )
-from app.users.service import violated_constraint
+from app.database import violated_constraint
 
 UNIQUE_CATEGORY_NAME_INDEX = "uq_categories_name_lower"
 UNIQUE_SUPPLIER_NAME_INDEX = "uq_suppliers_name_lower"
