@@ -3,9 +3,11 @@ from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    EmailStr,
     StrictBool,
     StringConstraints,
     field_validator,
@@ -21,36 +23,44 @@ def _blank_to_none(value: object) -> object:
     return value
 
 
-CategoryName = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+def _reject_null(value: object) -> object:
+    if value is None:
+        raise PydanticCustomError("null_not_allowed", "Value cannot be null.")
+
+    return value
+
+
+def _lowercase(value: str | None) -> str | None:
+    return value.lower() if value is not None else None
+
+
+def _required_name(max_length: int):
+    return Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=max_length),
+    ]
+
+
+def _optional_text(max_length: int):
+    return Annotated[
+        Annotated[str, StringConstraints(max_length=max_length)] | None,
+        BeforeValidator(_blank_to_none),
+    ]
+
+
+CategoryName = _required_name(100)
+Description = _optional_text(500)
+
+SupplierName = _required_name(200)
+SupplierEmail = Annotated[
+    EmailStr | None, BeforeValidator(_blank_to_none), AfterValidator(_lowercase)
 ]
-Description = Annotated[
-    Annotated[str, StringConstraints(max_length=500)] | None,
-    BeforeValidator(_blank_to_none),
-]
+Phone = _optional_text(50)
+Notes = _optional_text(1000)
 
 
-class CategoryCreate(BaseModel):
+class _UpdateModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-    name: CategoryName
-    description: Description = None
-
-
-class CategoryUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    name: CategoryName | None = None
-    description: Description = None
-    is_archived: StrictBool | None = None
-
-    @field_validator("name", "is_archived", mode="before")
-    @classmethod
-    def _reject_null(cls, value: object) -> object:
-        if value is None:
-            raise PydanticCustomError("null_not_allowed", "Value cannot be null.")
-
-        return value
 
     @model_validator(mode="after")
     def _require_a_change(self) -> Self:
@@ -62,11 +72,61 @@ class CategoryUpdate(BaseModel):
         return self
 
 
+class CategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: CategoryName
+    description: Description = None
+
+
+class CategoryUpdate(_UpdateModel):
+    name: CategoryName | None = None
+    description: Description = None
+    is_archived: StrictBool | None = None
+
+    _required_fields_not_null = field_validator("name", "is_archived", mode="before")(
+        _reject_null
+    )
+
+
 class CategoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     name: str
     description: str | None
+    is_archived: bool
+    created_at: datetime
+
+
+class SupplierCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: SupplierName
+    email: SupplierEmail = None
+    phone: Phone = None
+    notes: Notes = None
+
+
+class SupplierUpdate(_UpdateModel):
+    name: SupplierName | None = None
+    email: SupplierEmail = None
+    phone: Phone = None
+    notes: Notes = None
+    is_archived: StrictBool | None = None
+
+    _required_fields_not_null = field_validator("name", "is_archived", mode="before")(
+        _reject_null
+    )
+
+
+class SupplierOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    email: str | None
+    phone: str | None
+    notes: str | None
     is_archived: bool
     created_at: datetime

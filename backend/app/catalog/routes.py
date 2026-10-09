@@ -5,20 +5,33 @@ from pydantic import ValidationError
 
 from app.api import request_payload, validation_error_response
 from app.auth.decorators import login_required, require_role
-from app.catalog.models import Category
-from app.catalog.schemas import CategoryCreate, CategoryOut, CategoryUpdate
+from app.catalog.models import Category, Supplier
+from app.catalog.schemas import (
+    CategoryCreate,
+    CategoryOut,
+    CategoryUpdate,
+    SupplierCreate,
+    SupplierOut,
+    SupplierUpdate,
+)
 from app.catalog.service import (
     CategoryNameTakenError,
+    SupplierNameTakenError,
     create_category,
+    create_supplier,
     get_category,
+    get_supplier,
     list_categories,
+    list_suppliers,
     update_category,
+    update_supplier,
 )
 from app.database import get_db
 from app.errors import error_response
 from app.users.models import UserRole
 
 categories_bp = Blueprint("categories", __name__, url_prefix="/api/v1/categories")
+suppliers_bp = Blueprint("suppliers", __name__, url_prefix="/api/v1/suppliers")
 
 
 def category_json(category: Category) -> dict:
@@ -99,3 +112,79 @@ def update(category_id: uuid.UUID):
 
     db.commit()
     return jsonify(category_json(category))
+
+
+def supplier_json(supplier: Supplier) -> dict:
+    return SupplierOut.model_validate(supplier).model_dump(mode="json")
+
+
+def supplier_not_found_response():
+    return error_response("not_found", "Supplier not found.", 404)
+
+
+def supplier_name_taken_response():
+    return error_response(
+        "name_taken", "A supplier with this name already exists.", 409
+    )
+
+
+@suppliers_bp.get("")
+@login_required
+def list_all_suppliers():
+    suppliers = list_suppliers(get_db(), include_archived_requested())
+    return jsonify(suppliers=[supplier_json(supplier) for supplier in suppliers])
+
+
+@suppliers_bp.get("/<uuid:supplier_id>")
+@login_required
+def get_one_supplier(supplier_id: uuid.UUID):
+    supplier = get_supplier(get_db(), supplier_id)
+
+    if supplier is None:
+        return supplier_not_found_response()
+
+    return jsonify(supplier_json(supplier))
+
+
+@suppliers_bp.post("")
+@login_required
+@require_role(UserRole.ADMIN)
+def create_one_supplier():
+    try:
+        data = SupplierCreate.model_validate(request_payload())
+    except ValidationError as error:
+        return validation_error_response(error)
+
+    db = get_db()
+
+    try:
+        supplier = create_supplier(db, data)
+    except SupplierNameTakenError:
+        return supplier_name_taken_response()
+
+    db.commit()
+    return jsonify(supplier_json(supplier)), 201
+
+
+@suppliers_bp.patch("/<uuid:supplier_id>")
+@login_required
+@require_role(UserRole.ADMIN)
+def update_one_supplier(supplier_id: uuid.UUID):
+    db = get_db()
+    supplier = get_supplier(db, supplier_id)
+
+    if supplier is None:
+        return supplier_not_found_response()
+
+    try:
+        data = SupplierUpdate.model_validate(request_payload())
+    except ValidationError as error:
+        return validation_error_response(error)
+
+    try:
+        update_supplier(db, supplier, data)
+    except SupplierNameTakenError:
+        return supplier_name_taken_response()
+
+    db.commit()
+    return jsonify(supplier_json(supplier))
