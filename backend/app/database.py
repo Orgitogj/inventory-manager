@@ -1,7 +1,10 @@
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+
 import click
 from flask import Flask, current_app, g
 from sqlalchemy import Engine, MetaData, create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 NAMING_CONVENTION = {
@@ -19,6 +22,23 @@ class DatabaseNotConfiguredError(RuntimeError):
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+def violated_constraint(error: IntegrityError) -> str | None:
+    diag = getattr(error.orig, "diag", None)
+    return getattr(diag, "constraint_name", None)
+
+
+@contextmanager
+def translate_unique_violation(
+    constraint: str, error_factory: Callable[[], Exception]
+) -> Iterator[None]:
+    try:
+        yield
+    except IntegrityError as error:
+        if violated_constraint(error) == constraint:
+            raise error_factory() from None
+        raise
 
 
 def get_engine() -> Engine:

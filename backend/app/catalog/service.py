@@ -1,7 +1,6 @@
 import uuid
 
 from sqlalchemy import ColumnElement, func, or_, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.catalog.models import Category, Product, Supplier
@@ -14,7 +13,7 @@ from app.catalog.schemas import (
     SupplierCreate,
     SupplierUpdate,
 )
-from app.users.service import violated_constraint
+from app.database import translate_unique_violation
 
 UNIQUE_CATEGORY_NAME_INDEX = "uq_categories_name_lower"
 UNIQUE_SUPPLIER_NAME_INDEX = "uq_suppliers_name_lower"
@@ -55,13 +54,13 @@ class ArchivedReferenceError(Exception):
 def create_category(session: Session, data: CategoryCreate) -> Category:
     category = Category(name=data.name, description=data.description)
 
-    try:
-        with session.begin_nested():
-            session.add(category)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_CATEGORY_NAME_INDEX:
-            raise CategoryNameTakenError(data.name) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_CATEGORY_NAME_INDEX, lambda: CategoryNameTakenError(data.name)
+        ),
+        session.begin_nested(),
+    ):
+        session.add(category)
 
     return category
 
@@ -84,14 +83,15 @@ def update_category(
 ) -> Category:
     changes = data.model_dump(exclude_unset=True)
 
-    try:
-        with session.begin_nested():
-            for field, value in changes.items():
-                setattr(category, field, value)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_CATEGORY_NAME_INDEX:
-            raise CategoryNameTakenError(changes["name"]) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_CATEGORY_NAME_INDEX,
+            lambda: CategoryNameTakenError(changes["name"]),
+        ),
+        session.begin_nested(),
+    ):
+        for field, value in changes.items():
+            setattr(category, field, value)
 
     return category
 
@@ -101,13 +101,13 @@ def create_supplier(session: Session, data: SupplierCreate) -> Supplier:
         name=data.name, email=data.email, phone=data.phone, notes=data.notes
     )
 
-    try:
-        with session.begin_nested():
-            session.add(supplier)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_SUPPLIER_NAME_INDEX:
-            raise SupplierNameTakenError(data.name) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_SUPPLIER_NAME_INDEX, lambda: SupplierNameTakenError(data.name)
+        ),
+        session.begin_nested(),
+    ):
+        session.add(supplier)
 
     return supplier
 
@@ -130,14 +130,15 @@ def update_supplier(
 ) -> Supplier:
     changes = data.model_dump(exclude_unset=True)
 
-    try:
-        with session.begin_nested():
-            for field, value in changes.items():
-                setattr(supplier, field, value)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_SUPPLIER_NAME_INDEX:
-            raise SupplierNameTakenError(changes["name"]) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_SUPPLIER_NAME_INDEX,
+            lambda: SupplierNameTakenError(changes["name"]),
+        ),
+        session.begin_nested(),
+    ):
+        for field, value in changes.items():
+            setattr(supplier, field, value)
 
     return supplier
 
@@ -180,13 +181,13 @@ def create_product(session: Session, data: ProductCreate) -> Product:
         unit_price=data.unit_price,
     )
 
-    try:
-        with session.begin_nested():
-            session.add(product)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_PRODUCT_SKU_CONSTRAINT:
-            raise SkuTakenError(data.sku) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_PRODUCT_SKU_CONSTRAINT, lambda: SkuTakenError(data.sku)
+        ),
+        session.begin_nested(),
+    ):
+        session.add(product)
 
     return product
 
@@ -246,14 +247,14 @@ def update_product(session: Session, product: Product, data: ProductUpdate) -> P
     if supplier_id is not None and supplier_id != product.supplier_id:
         require_usable_reference(session, Supplier, supplier_id, "supplier_id")
 
-    try:
-        with session.begin_nested():
-            for field, value in changes.items():
-                setattr(product, field, value)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_PRODUCT_SKU_CONSTRAINT:
-            raise SkuTakenError(changes["sku"]) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_PRODUCT_SKU_CONSTRAINT, lambda: SkuTakenError(changes["sku"])
+        ),
+        session.begin_nested(),
+    ):
+        for field, value in changes.items():
+            setattr(product, field, value)
 
     session.expire(product, ["category", "supplier"])
     return product

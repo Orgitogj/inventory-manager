@@ -6,9 +6,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app import create_app
 from app.config import Settings
+from app.database import violated_constraint
 from app.users.models import UserRole
 from app.users.schemas import StaffCreate
-from app.users.service import create_user, violated_constraint
+from app.users.service import create_user
 
 pytestmark = pytest.mark.db
 

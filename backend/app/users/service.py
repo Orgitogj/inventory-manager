@@ -1,11 +1,11 @@
 import uuid
 
 from sqlalchemy import exists, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.passwords import hash_password
 from app.auth.service import end_all_sessions
+from app.database import translate_unique_violation
 from app.users.models import User, UserRole
 from app.users.schemas import StaffCreate, StaffUpdate
 
@@ -28,11 +28,6 @@ class LastAdminError(Exception):
         super().__init__("The last active admin cannot be demoted or deactivated.")
 
 
-def violated_constraint(error: IntegrityError) -> str | None:
-    diag = getattr(error.orig, "diag", None)
-    return getattr(diag, "constraint_name", None)
-
-
 def admin_exists(session: Session) -> bool:
     return session.scalar(select(exists().where(User.role == UserRole.ADMIN)))
 
@@ -45,13 +40,13 @@ def create_user(session: Session, data: StaffCreate) -> User:
         role=data.role,
     )
 
-    try:
-        with session.begin_nested():
-            session.add(user)
-    except IntegrityError as error:
-        if violated_constraint(error) == UNIQUE_EMAIL_CONSTRAINT:
-            raise EmailAlreadyExistsError(user.email) from None
-        raise
+    with (
+        translate_unique_violation(
+            UNIQUE_EMAIL_CONSTRAINT, lambda: EmailAlreadyExistsError(user.email)
+        ),
+        session.begin_nested(),
+    ):
+        session.add(user)
 
     return user
 
