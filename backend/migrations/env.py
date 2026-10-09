@@ -4,6 +4,7 @@ from alembic import context
 from sqlalchemy import Connection, create_engine, pool
 
 from app.auth import models as auth_models  # noqa: F401
+from app.catalog import models as catalog_models  # noqa: F401
 from app.config import Settings
 from app.database import Base
 from app.users import models as user_models  # noqa: F401
@@ -49,7 +50,11 @@ def run_migrations_online() -> None:
         run_migrations_with(provided_connection)
         return
 
-    connectable = create_engine(get_database_url(), poolclass=pool.NullPool)
+    connectable = create_engine(
+        get_database_url(),
+        poolclass=pool.NullPool,
+        connect_args={"connect_timeout": 5},
+    )
 
     with connectable.connect() as connection:
         run_migrations_with(connection)
