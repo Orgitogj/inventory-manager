@@ -7,6 +7,7 @@ from app.auth import models as auth_models  # noqa: F401
 from app.catalog import models as catalog_models  # noqa: F401
 from app.config import Settings
 from app.database import Base
+from app.inventory import models as inventory_models  # noqa: F401
 from app.users import models as user_models  # noqa: F401
 
 config = context.config
