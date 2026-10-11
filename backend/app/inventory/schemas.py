@@ -95,3 +95,17 @@ class MovementOut(BaseModel):
     created_at: datetime
     product: ProductRefOut
     created_by: UserRefOut
+
+
+class StockListOut(BaseModel):
+    stock: list[StockOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class MovementListOut(BaseModel):
+    movements: list[MovementOut]
+    total: int
+    limit: int
+    offset: int

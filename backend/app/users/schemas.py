@@ -94,6 +94,10 @@ class StaffOut(UserOut):
     created_at: datetime
 
 
+class StaffListOut(BaseModel):
+    users: list[StaffOut]
+
+
 def validation_error_details(error: ValidationError) -> list[dict[str, str]]:
     return [
         {

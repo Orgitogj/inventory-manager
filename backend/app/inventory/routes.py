@@ -1,17 +1,17 @@
-from flask import Blueprint, g, jsonify, request
-from pydantic import ValidationError
+from typing import Annotated
 
-from app.api import request_payload, validation_error_response
-from app.auth.decorators import login_required, require_role
-from app.catalog.models import Product
+from fastapi import APIRouter, Depends, Query
+
+from app.auth.dependencies import current_session, require_role
 from app.catalog.schemas import ProductListQuery
-from app.database import get_db
-from app.errors import error_response
-from app.inventory.models import StockMovement
+from app.database import DbSession
+from app.errors import ApiError
 from app.inventory.schemas import (
     MovementCreate,
+    MovementListOut,
     MovementListQuery,
     MovementOut,
+    StockListOut,
     StockOut,
 )
 from app.inventory.service import (
@@ -23,91 +23,72 @@ from app.inventory.service import (
     list_stock,
     record_movement,
 )
-from app.users.models import UserRole
+from app.users.models import User, UserRole
 
-inventory_bp = Blueprint("inventory", __name__, url_prefix="/api/v1/inventory")
+router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
-
-def stock_json(product: Product, quantity: int) -> dict:
-    return StockOut.model_validate(
-        {"product": product, "quantity": quantity}, from_attributes=True
-    ).model_dump(mode="json")
+LOGGED_IN = [Depends(current_session)]
+StockKeeper = Annotated[User, Depends(require_role(UserRole.ADMIN, UserRole.WAREHOUSE))]
 
 
-def movement_json(movement: StockMovement) -> dict:
-    return MovementOut.model_validate(movement).model_dump(mode="json")
+def field_error(code: str, field: str, message: str) -> ApiError:
+    return ApiError(422, code, message, [{"field": field, "message": message}])
 
 
-def field_error_response(code: str, field: str, message: str):
-    return error_response(code, message, 422, [{"field": field, "message": message}])
-
-
-@inventory_bp.get("/stock")
-@login_required
-def stock():
-    try:
-        filters = ProductListQuery.model_validate(request.args.to_dict())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    rows, total = list_stock(get_db(), filters)
-    return jsonify(
-        stock=[stock_json(product, quantity) for product, quantity in rows],
+@router.get("/stock", response_model=StockListOut, dependencies=LOGGED_IN)
+def stock(filters: Annotated[ProductListQuery, Query()], db: DbSession) -> StockListOut:
+    rows, total = list_stock(db, filters)
+    return StockListOut(
+        stock=[
+            StockOut.model_validate(
+                {"product": product, "quantity": quantity}, from_attributes=True
+            )
+            for product, quantity in rows
+        ],
         total=total,
         limit=filters.limit,
         offset=filters.offset,
     )
 
 
-@inventory_bp.get("/movements")
-@login_required
-def movements():
-    try:
-        filters = MovementListQuery.model_validate(request.args.to_dict())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    items, total = list_movements(get_db(), filters)
-    return jsonify(
-        movements=[movement_json(movement) for movement in items],
+@router.get("/movements", response_model=MovementListOut, dependencies=LOGGED_IN)
+def movements(
+    filters: Annotated[MovementListQuery, Query()], db: DbSession
+) -> MovementListOut:
+    items, total = list_movements(db, filters)
+    return MovementListOut(
+        movements=[MovementOut.model_validate(movement) for movement in items],
         total=total,
         limit=filters.limit,
         offset=filters.offset,
     )
 
 
-@inventory_bp.post("/movements")
-@login_required
-@require_role(UserRole.ADMIN, UserRole.WAREHOUSE)
-def create_movement():
-    try:
-        data = MovementCreate.model_validate(request_payload())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    db = get_db()
-
+@router.post("/movements", response_model=MovementOut, status_code=201)
+def create_movement(
+    data: MovementCreate, db: DbSession, user: StockKeeper
+) -> MovementOut:
     try:
         movement = record_movement(
             db,
             product_id=data.product_id,
             kind=data.kind,
             quantity=data.quantity,
-            actor_id=g.current_user.id,
+            actor_id=user.id,
             reason=data.reason,
         )
     except InvalidQuantityError as error:
-        return field_error_response("invalid_quantity", "quantity", str(error))
+        raise field_error("invalid_quantity", "quantity", str(error)) from None
     except ProductNotFoundError:
-        return field_error_response(
+        raise field_error(
             "invalid_reference", "product_id", "Referenced record does not exist."
-        )
+        ) from None
     except ArchivedProductError:
-        return field_error_response(
+        raise field_error(
             "archived_reference", "product_id", "Referenced record is archived."
-        )
+        ) from None
     except InsufficientStockError as error:
-        return error_response("insufficient_stock", str(error), 409)
+        raise ApiError(409, "insufficient_stock", str(error)) from None
 
     db.commit()
-    return jsonify(movement_json(movement)), 201
+    return MovementOut.model_validate(movement)

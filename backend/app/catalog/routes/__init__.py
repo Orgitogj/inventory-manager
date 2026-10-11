@@ -1,5 +1,5 @@
-from app.catalog.routes.categories import categories_bp
-from app.catalog.routes.products import products_bp
-from app.catalog.routes.suppliers import suppliers_bp
+from app.catalog.routes.categories import router as categories_router
+from app.catalog.routes.products import router as products_router
+from app.catalog.routes.suppliers import router as suppliers_router
 
-__all__ = ["categories_bp", "products_bp", "suppliers_bp"]
+__all__ = ["categories_router", "products_router", "suppliers_router"]
