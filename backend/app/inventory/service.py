@@ -1,11 +1,14 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.catalog.models import Product
+from app.catalog.schemas import ProductListQuery
+from app.catalog.service import product_conditions
 from app.inventory.models import MovementKind, StockLevel, StockMovement
+from app.inventory.schemas import MovementListQuery
 
 
 class ProductNotFoundError(Exception):
@@ -105,3 +108,45 @@ def get_stock_quantity(session: Session, product_id: uuid.UUID) -> int:
         select(StockLevel.quantity).where(StockLevel.product_id == product_id)
     )
     return quantity or 0
+
+
+def list_stock(
+    session: Session, filters: ProductListQuery
+) -> tuple[list[tuple[Product, int]], int]:
+    conditions = product_conditions(filters)
+    total = session.scalar(select(func.count()).select_from(Product).where(*conditions))
+    rows = session.execute(
+        select(Product, func.coalesce(StockLevel.quantity, 0))
+        .outerjoin(StockLevel, StockLevel.product_id == Product.id)
+        .where(*conditions)
+        .order_by(func.lower(Product.name), Product.sku)
+        .limit(filters.limit)
+        .offset(filters.offset)
+    )
+
+    return [(product, quantity) for product, quantity in rows], total
+
+
+def list_movements(
+    session: Session, filters: MovementListQuery
+) -> tuple[list[StockMovement], int]:
+    conditions = []
+
+    if filters.product_id is not None:
+        conditions.append(StockMovement.product_id == filters.product_id)
+
+    if filters.kind is not None:
+        conditions.append(StockMovement.kind == filters.kind)
+
+    total = session.scalar(
+        select(func.count()).select_from(StockMovement).where(*conditions)
+    )
+    movements = session.scalars(
+        select(StockMovement)
+        .where(*conditions)
+        .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+        .limit(filters.limit)
+        .offset(filters.offset)
+    )
+
+    return list(movements), total
