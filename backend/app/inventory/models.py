@@ -3,9 +3,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Index, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.catalog.models import Product
 from app.database import Base
+from app.users.models import User
 
 
 class MovementKind(enum.StrEnum):
@@ -69,6 +71,10 @@ class StockMovement(Base):
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
+
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.clock_timestamp()
     )
+
+    product: Mapped[Product] = relationship(lazy="joined", innerjoin=True)
+    created_by: Mapped[User] = relationship(lazy="joined", innerjoin=True)
