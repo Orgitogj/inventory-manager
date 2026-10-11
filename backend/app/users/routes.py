@@ -1,18 +1,13 @@
 import uuid
+from typing import Annotated
 
-from flask import Blueprint, g, jsonify
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends
 
-from app.api import request_payload, validation_error_response
-from app.auth.decorators import login_required, require_role
-from app.database import get_db
-from app.errors import error_response
+from app.auth.dependencies import require_role
+from app.database import DbSession
+from app.errors import ApiError
 from app.users.models import User, UserRole
-from app.users.schemas import (
-    StaffCreate,
-    StaffOut,
-    StaffUpdate,
-)
+from app.users.schemas import StaffCreate, StaffListOut, StaffOut, StaffUpdate
 from app.users.service import (
     EmailAlreadyExistsError,
     LastAdminError,
@@ -23,79 +18,61 @@ from app.users.service import (
     update_user,
 )
 
-users_bp = Blueprint("users", __name__, url_prefix="/api/v1/users")
+router = APIRouter(prefix="/api/v1/users", tags=["users"])
+
+AdminUser = Annotated[User, Depends(require_role(UserRole.ADMIN))]
+ADMIN_ONLY = [Depends(require_role(UserRole.ADMIN))]
 
 
-def staff_json(user: User) -> dict:
-    return StaffOut.model_validate(user).model_dump(mode="json")
+def not_found() -> ApiError:
+    return ApiError(404, "not_found", "User not found.")
 
 
-def not_found_response():
-    return error_response("not_found", "User not found.", 404)
-
-
-@users_bp.post("")
-@login_required
-@require_role(UserRole.ADMIN)
-def create_staff():
-    try:
-        data = StaffCreate.model_validate(request_payload())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    db = get_db()
-
+@router.post("", response_model=StaffOut, status_code=201, dependencies=ADMIN_ONLY)
+def create_staff(data: StaffCreate, db: DbSession) -> StaffOut:
     try:
         user = create_user(db, data)
     except EmailAlreadyExistsError:
-        return error_response(
-            "email_taken", "A user with this email already exists.", 409
-        )
+        raise ApiError(
+            409, "email_taken", "A user with this email already exists."
+        ) from None
 
     db.commit()
-    return jsonify(staff_json(user)), 201
+    return StaffOut.model_validate(user)
 
 
-@users_bp.get("")
-@login_required
-@require_role(UserRole.ADMIN)
-def list_staff():
-    return jsonify(users=[staff_json(user) for user in list_users(get_db())])
+@router.get("", response_model=StaffListOut, dependencies=ADMIN_ONLY)
+def list_staff(db: DbSession) -> StaffListOut:
+    return StaffListOut(
+        users=[StaffOut.model_validate(user) for user in list_users(db)]
+    )
 
 
-@users_bp.get("/<uuid:user_id>")
-@login_required
-@require_role(UserRole.ADMIN)
-def get_staff(user_id: uuid.UUID):
-    user = get_user(get_db(), user_id)
-
-    if user is None:
-        return not_found_response()
-
-    return jsonify(staff_json(user))
-
-
-@users_bp.patch("/<uuid:user_id>")
-@login_required
-@require_role(UserRole.ADMIN)
-def update_staff(user_id: uuid.UUID):
-    db = get_db()
+@router.get("/{user_id}", response_model=StaffOut, dependencies=ADMIN_ONLY)
+def get_staff(user_id: uuid.UUID, db: DbSession) -> StaffOut:
     user = get_user(db, user_id)
 
     if user is None:
-        return not_found_response()
+        raise not_found()
+
+    return StaffOut.model_validate(user)
+
+
+@router.patch("/{user_id}", response_model=StaffOut)
+def update_staff(
+    user_id: uuid.UUID, data: StaffUpdate, db: DbSession, actor: AdminUser
+) -> StaffOut:
+    user = get_user(db, user_id)
+
+    if user is None:
+        raise not_found()
 
     try:
-        data = StaffUpdate.model_validate(request_payload())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    try:
-        update_user(db, g.current_user, user, data)
+        update_user(db, actor, user, data)
     except SelfModificationError as error:
-        return error_response("self_modification", str(error), 409)
+        raise ApiError(409, "self_modification", str(error)) from None
     except LastAdminError as error:
-        return error_response("last_admin", str(error), 409)
+        raise ApiError(409, "last_admin", str(error)) from None
 
     db.commit()
-    return jsonify(staff_json(user))
+    return StaffOut.model_validate(user)

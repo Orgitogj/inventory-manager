@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from app.users.schemas import PASSWORD_MAX_LENGTH
+from app.users.schemas import PASSWORD_MAX_LENGTH, UserOut
 
 
 class LoginRequest(BaseModel):
@@ -8,3 +8,8 @@ class LoginRequest(BaseModel):
 
     email: str = Field(min_length=1, max_length=320)
     password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+
+class SessionOut(BaseModel):
+    user: UserOut
+    csrf_token: str

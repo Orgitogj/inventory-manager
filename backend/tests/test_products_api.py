@@ -1,6 +1,6 @@
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError
 
@@ -25,28 +25,28 @@ INSERT = text(
 
 
 @pytest.fixture
-def app(db_session_factory) -> Flask:
+def app(db_session_factory) -> FastAPI:
     app = create_app(Settings(app_env="testing", database_url=None, _env_file=None))
-    app.extensions["database_sessionmaker"] = db_session_factory
+    app.state.session_factory = db_session_factory
     return app
 
 
-def logged_in(app: Flask, db_session, email: str, role: UserRole):
+def logged_in(app: FastAPI, db_session, email: str, role: UserRole):
     create_user(
         db_session,
         StaffCreate(email=email, full_name="Staff", password=PASSWORD, role=role),
     )
     db_session.commit()
 
-    client = app.test_client()
+    client = TestClient(app)
     response = client.post(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
-    return client, {"X-CSRF-Token": response.get_json()["csrf_token"]}
+    return client, {"X-CSRF-Token": response.json()["csrf_token"]}
 
 
 @pytest.fixture
-def admin(app, db_session) -> tuple[FlaskClient, dict[str, str]]:
+def admin(app, db_session) -> tuple[TestClient, dict[str, str]]:
     return logged_in(app, db_session, "admin@shop.al", UserRole.ADMIN)
 
 
@@ -62,19 +62,19 @@ def patch(admin, url: str, **payload):
 
 def add_category(admin, name: str = "Pije") -> dict:
     response = post(admin, "/api/v1/categories", name=name)
-    assert response.status_code == 201, response.get_json()
-    return response.get_json()
+    assert response.status_code == 201, response.json()
+    return response.json()
 
 
 def add_supplier(admin, name: str = "Alfa") -> dict:
     response = post(admin, "/api/v1/suppliers", name=name)
-    assert response.status_code == 201, response.get_json()
-    return response.get_json()
+    assert response.status_code == 201, response.json()
+    return response.json()
 
 
 def archive(admin, kind: str, item: dict) -> None:
     response = patch(admin, f"/api/v1/{kind}/{item['id']}", is_archived=True)
-    assert response.status_code == 200, response.get_json()
+    assert response.status_code == 200, response.json()
 
 
 @pytest.fixture
@@ -100,8 +100,8 @@ def create(admin, category: dict, **overrides):
 
 def add_product(admin, category: dict, **overrides) -> dict:
     response = create(admin, category, **overrides)
-    assert response.status_code == 201, response.get_json()
-    return response.get_json()
+    assert response.status_code == 201, response.json()
+    return response.json()
 
 
 def product_url(product: dict) -> str:
@@ -109,16 +109,16 @@ def product_url(product: dict) -> str:
 
 
 def error_code(response) -> str:
-    return response.get_json()["error"]["code"]
+    return response.json()["error"]["code"]
 
 
 def error_details(response) -> list[dict]:
-    return response.get_json()["error"]["details"]
+    return response.json()["error"]["details"]
 
 
 def skus(response) -> list[str]:
-    assert response.status_code == 200, response.get_json()
-    return [product["sku"] for product in response.get_json()["products"]]
+    assert response.status_code == 200, response.json()
+    return [product["sku"] for product in response.json()["products"]]
 
 
 def listed(admin, query: str = "") -> list[str]:
@@ -138,7 +138,7 @@ def test_admin_creates_a_product(admin, category, supplier):
     )
 
     assert response.status_code == 201
-    body = response.get_json()
+    body = response.json()
     assert set(body) == {
         "id",
         "sku",
@@ -225,8 +225,8 @@ def test_invalid_input_returns_field_details_without_the_input(admin, category):
     details = error_details(response)
     assert {detail["field"] for detail in details} == {"sku", "name", "unit_price"}
     assert all(set(detail) == {"field", "message"} for detail in details)
-    assert "bad sku!" not in response.get_data(as_text=True)
-    assert "1.999" not in response.get_data(as_text=True)
+    assert "bad sku!" not in response.text
+    assert "1.999" not in response.text
 
 
 @pytest.mark.parametrize("role", [UserRole.WAREHOUSE, UserRole.SALES])
@@ -236,7 +236,7 @@ def test_staff_can_read_but_not_write(app, db_session, admin, category, role):
     client, _ = staff
 
     assert skus(client.get(PRODUCTS_URL)) == ["UJE-05"]
-    assert client.get(product_url(product)).get_json()["sku"] == "UJE-05"
+    assert client.get(product_url(product)).json()["sku"] == "UJE-05"
 
     created = create(staff, category, sku="NEW-1")
     assert created.status_code == 403
@@ -246,12 +246,12 @@ def test_staff_can_read_but_not_write(app, db_session, admin, category, role):
     assert updated.status_code == 403
     assert error_code(updated) == "forbidden"
 
-    assert client.get(product_url(product)).get_json()["unit_price"] == "12.50"
+    assert client.get(product_url(product)).json()["unit_price"] == "12.50"
     assert listed(admin) == ["UJE-05"]
 
 
 def test_anonymous_user_gets_401(app):
-    client = app.test_client()
+    client = TestClient(app)
 
     assert client.get(PRODUCTS_URL).status_code == 401
     assert client.get(f"{PRODUCTS_URL}/{UNKNOWN_ID}").status_code == 401
@@ -294,7 +294,7 @@ def test_list_reports_total_limit_and_offset(admin, category):
     client, _ = admin
     add_product(admin, category)
 
-    body = client.get(PRODUCTS_URL).get_json()
+    body = client.get(PRODUCTS_URL).json()
 
     assert set(body) == {"products", "total", "limit", "offset"}
     assert body["total"] == 1
@@ -344,7 +344,7 @@ def test_search_treats_wildcards_as_plain_text(admin, category):
     assert listed(admin, "?search=B_1") == ["B_1"]
     assert listed(admin, "?search=_") == ["B_1"]
     assert listed(admin, "?search=%5C") == ["C-1"]
-    assert client.get(f"{PRODUCTS_URL}?search=%25").get_json()["total"] == 1
+    assert client.get(f"{PRODUCTS_URL}?search=%25").json()["total"] == 1
 
 
 def test_archived_products_are_hidden_by_default(admin, category):
@@ -354,10 +354,10 @@ def test_archived_products_are_hidden_by_default(admin, category):
 
     response = patch(admin, product_url(old), is_archived=True)
     assert response.status_code == 200
-    assert response.get_json()["is_archived"] is True
+    assert response.json()["is_archived"] is True
 
     assert listed(admin) == ["NEW-1"]
-    assert client.get(PRODUCTS_URL).get_json()["total"] == 1
+    assert client.get(PRODUCTS_URL).json()["total"] == 1
     assert listed(admin, "?include_archived=true") == ["NEW-1", "OLD-1"]
     assert listed(admin, "?include_archived=true&search=old") == ["OLD-1"]
     assert client.get(product_url(old)).status_code == 200
@@ -370,7 +370,7 @@ def test_pagination_returns_every_product_exactly_once(admin, category):
         add_product(admin, category, sku=sku, name=f"Produkt {sku}")
 
     pages = [
-        client.get(f"{PRODUCTS_URL}?limit=2&offset={offset}").get_json()
+        client.get(f"{PRODUCTS_URL}?limit=2&offset={offset}").json()
         for offset in (0, 2, 4, 6)
     ]
 
@@ -392,7 +392,7 @@ def test_total_counts_only_the_filtered_products(admin, category):
 
     body = client.get(
         f"{PRODUCTS_URL}?category_id={category['id']}&limit=1&offset=1"
-    ).get_json()
+    ).json()
 
     assert body["total"] == 3
     assert [product["sku"] for product in body["products"]] == ["P-1"]
@@ -462,14 +462,14 @@ def test_update_changes_fields_and_normalizes_them(admin, category, supplier):
     )
 
     assert response.status_code == 200
-    body = response.get_json()
+    body = response.json()
     assert body["sku"] == "UJE-15"
     assert body["name"] == "Ujë 1.5L"
     assert body["description"] == "Shishe e madhe"
     assert body["unit_price"] == "30.00"
     assert body["category"] == {"id": food["id"], "name": "Ushqim"}
     assert body["supplier"] == {"id": supplier["id"], "name": "Alfa"}
-    assert client.get(product_url(product)).get_json() == body
+    assert client.get(product_url(product)).json() == body
 
 
 def test_null_removes_the_supplier_and_keeps_the_rest(admin, category, supplier):
@@ -481,7 +481,7 @@ def test_null_removes_the_supplier_and_keeps_the_rest(admin, category, supplier)
     response = patch(admin, product_url(product), supplier_id=None)
 
     assert response.status_code == 200
-    stored = client.get(product_url(product)).get_json()
+    stored = client.get(product_url(product)).json()
     assert stored["supplier"] is None
     assert stored["description"] == "Shishe"
     assert stored["category"]["id"] == category["id"]
@@ -500,13 +500,13 @@ def test_price_change_updates_updated_at_but_not_created_at(
         )
     )
     db_session.commit()
-    before = client.get(product_url(product)).get_json()
+    before = client.get(product_url(product)).json()
     assert before["updated_at"].startswith("2020-01-01")
 
     response = patch(admin, product_url(product), unit_price="13.00")
 
     assert response.status_code == 200
-    after = client.get(product_url(product)).get_json()
+    after = client.get(product_url(product)).json()
     assert after["unit_price"] == "13.00"
     assert after["created_at"] == before["created_at"]
     assert after["updated_at"] > before["updated_at"]
@@ -522,7 +522,7 @@ def test_rename_to_an_existing_sku_is_rejected(admin, category):
 
     assert response.status_code == 409
     assert error_code(response) == "sku_taken"
-    stored = client.get(product_url(second)).get_json()
+    stored = client.get(product_url(second)).json()
     assert stored["sku"] == "A-2"
     assert stored["name"] == "Ujë 0.5L"
 
@@ -552,7 +552,7 @@ def test_update_rejects_unknown_and_archived_references(
     assert error_code(unknown) == "invalid_reference"
     assert [detail["field"] for detail in error_details(unknown)] == [field]
 
-    stored = client.get(product_url(product)).get_json()
+    stored = client.get(product_url(product)).json()
     assert stored["category"]["id"] == category["id"]
     assert stored["supplier"]["id"] == supplier["id"]
 
@@ -574,11 +574,11 @@ def test_product_with_archived_references_can_still_be_edited(
     )
 
     assert renamed.status_code == 200
-    assert renamed.get_json()["name"] == "Emër i ri"
-    assert renamed.get_json()["unit_price"] == "9.99"
+    assert renamed.json()["name"] == "Emër i ri"
+    assert renamed.json()["unit_price"] == "9.99"
     assert unchanged_references.status_code == 200
-    assert unchanged_references.get_json()["description"] == "Përshkrim"
-    assert unchanged_references.get_json()["category"]["id"] == category["id"]
+    assert unchanged_references.json()["description"] == "Përshkrim"
+    assert unchanged_references.json()["category"]["id"] == category["id"]
 
 
 @pytest.mark.parametrize(
@@ -603,7 +603,7 @@ def test_invalid_update_is_rejected(admin, category, payload, field):
     assert response.status_code == 422
     assert error_code(response) == "validation_error"
     assert [detail["field"] for detail in error_details(response)] == [field]
-    assert client.get(product_url(product)).get_json() == product
+    assert client.get(product_url(product)).json() == product
 
 
 def test_unknown_product_returns_404(admin):
@@ -614,7 +614,7 @@ def test_unknown_product_returns_404(admin):
 
     assert found.status_code == 404
     assert error_code(found) == "not_found"
-    assert found.get_json()["error"]["message"] == "Product not found."
+    assert found.json()["error"]["message"] == "Product not found."
     assert updated.status_code == 404
     assert error_code(updated) == "not_found"
 

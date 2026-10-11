@@ -1,10 +1,10 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from typing import Annotated
 
-import click
-from flask import Flask, current_app, g
-from sqlalchemy import Engine, MetaData, create_engine, text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from fastapi import Depends, Request
+from sqlalchemy import Engine, MetaData, create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 NAMING_CONVENTION = {
@@ -41,66 +41,30 @@ def translate_unique_violation(
         raise
 
 
-def get_engine() -> Engine:
-    engine = current_app.extensions.get("database_engine")
+def build_engine(database_url: str) -> Engine:
+    return create_engine(
+        database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 5},
+    )
 
-    if engine is None:
-        raise RuntimeError("Database is not configured.")
 
-    return engine
+def build_session_factory(database_url: str) -> sessionmaker[Session]:
+    return sessionmaker(bind=build_engine(database_url))
 
 
-def get_session_factory() -> sessionmaker[Session]:
-    session_factory = current_app.extensions.get("database_sessionmaker")
+def get_db(request: Request) -> Iterator[Session]:
+    session_factory = request.app.state.session_factory
 
     if session_factory is None:
         raise DatabaseNotConfiguredError("Database is not configured.")
 
-    return session_factory
+    session = session_factory()
 
-
-def get_db() -> Session:
-    if "db_session" not in g:
-        g.db_session = get_session_factory()()
-
-    return g.db_session
-
-
-def close_db(_exception: BaseException | None = None) -> None:
-    db_session = g.pop("db_session", None)
-
-    if db_session is not None:
-        db_session.close()
-
-
-@click.command("db-check")
-def db_check():
     try:
-        with get_engine().connect() as connection:
-            row = connection.execute(
-                text("SELECT current_database(), current_user")
-            ).one()
-    except SQLAlchemyError, RuntimeError:
-        raise click.ClickException(
-            "Database connection failed. Check DATABASE_URL and PostgreSQL."
-        ) from None
-
-    click.echo(f"Database: {row[0]}")
-    click.echo(f"User: {row[1]}")
-    click.echo("Connection successful.")
+        yield session
+    finally:
+        session.close()
 
 
-def init_database(app: Flask) -> None:
-    database_url = app.config["DATABASE_URL"]
-
-    if database_url:
-        engine = create_engine(
-            database_url,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 5},
-        )
-        app.extensions["database_engine"] = engine
-        app.extensions["database_sessionmaker"] = sessionmaker(bind=engine)
-
-    app.teardown_appcontext(close_db)
-    app.cli.add_command(db_check)
+DbSession = Annotated[Session, Depends(get_db)]

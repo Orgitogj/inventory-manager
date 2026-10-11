@@ -1,6 +1,6 @@
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from app import create_app
 from app.config import Settings
@@ -17,13 +17,13 @@ UNKNOWN_ID = "00000000-0000-0000-0000-000000000000"
 
 
 @pytest.fixture
-def app(db_session_factory) -> Flask:
+def app(db_session_factory) -> FastAPI:
     app = create_app(Settings(app_env="testing", database_url=None, _env_file=None))
-    app.extensions["database_sessionmaker"] = db_session_factory
+    app.state.session_factory = db_session_factory
     return app
 
 
-def logged_in(app: Flask, db_session, email: str, role: UserRole):
+def logged_in(app: FastAPI, db_session, email: str, role: UserRole):
     create_user(
         db_session,
         StaffCreate(
@@ -32,25 +32,25 @@ def logged_in(app: Flask, db_session, email: str, role: UserRole):
     )
     db_session.commit()
 
-    client = app.test_client()
+    client = TestClient(app)
     response = client.post(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
-    return client, {"X-CSRF-Token": response.get_json()["csrf_token"]}
+    return client, {"X-CSRF-Token": response.json()["csrf_token"]}
 
 
 @pytest.fixture
-def admin(app, db_session) -> tuple[FlaskClient, dict[str, str]]:
+def admin(app, db_session) -> tuple[TestClient, dict[str, str]]:
     return logged_in(app, db_session, "admin@shop.al", UserRole.ADMIN)
 
 
 @pytest.fixture
-def warehouse(app, db_session) -> tuple[FlaskClient, dict[str, str]]:
+def warehouse(app, db_session) -> tuple[TestClient, dict[str, str]]:
     return logged_in(app, db_session, "magazina@shop.al", UserRole.WAREHOUSE)
 
 
 @pytest.fixture
-def sales(app, db_session) -> tuple[FlaskClient, dict[str, str]]:
+def sales(app, db_session) -> tuple[TestClient, dict[str, str]]:
     return logged_in(app, db_session, "shitje@shop.al", UserRole.SALES)
 
 
@@ -65,8 +65,8 @@ def get(user, url: str):
 
 
 def created(response) -> dict:
-    assert response.status_code == 201, response.get_json()
-    return response.get_json()
+    assert response.status_code == 201, response.json()
+    return response.json()
 
 
 @pytest.fixture
@@ -105,17 +105,17 @@ def move(user, product: dict, kind: str, quantity, **extra):
 
 def stock_of(user, product: dict) -> int:
     response = get(user, f"{STOCK_URL}?search={product['sku']}")
-    assert response.status_code == 200, response.get_json()
-    [row] = response.get_json()["stock"]
+    assert response.status_code == 200, response.json()
+    [row] = response.json()["stock"]
     return row["quantity"]
 
 
 def error_code(response) -> str:
-    return response.get_json()["error"]["code"]
+    return response.json()["error"]["code"]
 
 
 def error_fields(response) -> list[str]:
-    return [detail["field"] for detail in response.get_json()["error"]["details"]]
+    return [detail["field"] for detail in response.json()["error"]["details"]]
 
 
 def test_warehouse_records_a_receipt(warehouse, product):
@@ -222,7 +222,7 @@ def test_sales_can_read_but_not_record_movements(sales, warehouse, product):
     assert response.status_code == 403
     assert error_code(response) == "forbidden"
     assert stock_of(sales, product) == 4
-    assert get(sales, MOVEMENTS_URL).get_json()["total"] == 1
+    assert get(sales, MOVEMENTS_URL).json()["total"] == 1
 
 
 def test_recording_requires_csrf_token(warehouse, product):
@@ -238,7 +238,7 @@ def test_recording_requires_csrf_token(warehouse, product):
 
 @pytest.mark.parametrize("url", [STOCK_URL, MOVEMENTS_URL])
 def test_anonymous_user_gets_401(app, url):
-    response = app.test_client().get(url)
+    response = TestClient(app).get(url)
 
     assert response.status_code == 401
 
@@ -248,7 +248,7 @@ def test_stock_lists_products_without_movements_as_zero(admin, category, product
     created(move(admin, product, "receipt", 6))
 
     response = get(admin, STOCK_URL)
-    body = response.get_json()
+    body = response.json()
 
     assert response.status_code == 200
     assert body["total"] == 2
@@ -261,7 +261,7 @@ def test_stock_lists_products_without_movements_as_zero(admin, category, product
 def test_stock_reuses_product_filters(admin, category, product):
     add_product(admin, category, "LENG-1", "Lëng 1L")
 
-    body = get(admin, f"{STOCK_URL}?search=leng&limit=1").get_json()
+    body = get(admin, f"{STOCK_URL}?search=leng&limit=1").json()
 
     assert body["total"] == 1
     assert body["limit"] == 1
@@ -273,7 +273,7 @@ def test_movements_are_listed_newest_first(warehouse, product):
     created(move(warehouse, product, "issue", 2))
     created(move(warehouse, product, "receipt", 1))
 
-    body = get(warehouse, MOVEMENTS_URL).get_json()
+    body = get(warehouse, MOVEMENTS_URL).json()
 
     assert body["total"] == 3
     assert [row["quantity_after"] for row in body["movements"]] == [4, 3, 5]
@@ -285,8 +285,8 @@ def test_movements_can_be_filtered(admin, category, product):
     created(move(admin, product, "issue", 1))
     created(move(admin, other, "receipt", 2))
 
-    by_product = get(admin, f"{MOVEMENTS_URL}?product_id={other['id']}").get_json()
-    by_kind = get(admin, f"{MOVEMENTS_URL}?kind=issue").get_json()
+    by_product = get(admin, f"{MOVEMENTS_URL}?product_id={other['id']}").json()
+    by_kind = get(admin, f"{MOVEMENTS_URL}?kind=issue").json()
 
     assert [row["product"]["sku"] for row in by_product["movements"]] == ["LENG-1"]
     assert [row["quantity_change"] for row in by_kind["movements"]] == [-1]

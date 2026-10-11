@@ -1,39 +1,39 @@
 from datetime import timedelta
 
-from flask import Flask
+from fastapi import FastAPI
+from sqlalchemy.orm import sessionmaker
 
-from app.auth.routes import auth_bp
-from app.catalog.routes import categories_bp, products_bp, suppliers_bp
+from app.auth.routes import router as auth_router
+from app.catalog.routes import categories_router, products_router, suppliers_router
 from app.config import Settings
-from app.database import init_database
-from app.health.routes import health_bp
-from app.inventory.routes import inventory_bp
-from app.users.cli import create_admin
-from app.users.routes import users_bp
+from app.database import build_engine
+from app.errors import register_error_handlers
+from app.health.routes import router as health_router
+from app.inventory.routes import router as inventory_router
+from app.users.routes import router as users_router
 
 
-def create_app(settings: Settings | None = None) -> Flask:
+def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings if settings is not None else Settings()
 
-    app = Flask(__name__)
+    app = FastAPI(title="Inventory Manager API", redirect_slashes=False)
 
-    app.config.update(
-        APP_ENV=settings.app_env,
-        TESTING=settings.app_env == "testing",
-        DATABASE_URL=settings.database_url,
-        AUTH_COOKIE_NAME="inventory_session",
-        AUTH_COOKIE_SECURE=settings.app_env == "production",
-        AUTH_SESSION_LIFETIME=timedelta(hours=settings.session_lifetime_hours),
-    )
+    engine = build_engine(settings.database_url) if settings.database_url else None
 
-    init_database(app)
-    app.register_blueprint(health_bp)
-    app.register_blueprint(auth_bp)
-    app.register_blueprint(users_bp)
-    app.register_blueprint(categories_bp)
-    app.register_blueprint(suppliers_bp)
-    app.register_blueprint(products_bp)
-    app.register_blueprint(inventory_bp)
-    app.cli.add_command(create_admin)
+    app.state.settings = settings
+    app.state.cookie_name = "inventory_session"
+    app.state.cookie_secure = settings.app_env == "production"
+    app.state.session_lifetime = timedelta(hours=settings.session_lifetime_hours)
+    app.state.engine = engine
+    app.state.session_factory = sessionmaker(bind=engine) if engine else None
+
+    register_error_handlers(app)
+    app.include_router(health_router)
+    app.include_router(auth_router)
+    app.include_router(users_router)
+    app.include_router(categories_router)
+    app.include_router(suppliers_router)
+    app.include_router(products_router)
+    app.include_router(inventory_router)
 
     return app

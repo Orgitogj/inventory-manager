@@ -144,6 +144,10 @@ class CategoryOut(BaseModel):
     created_at: datetime
 
 
+class CategoryListOut(BaseModel):
+    categories: list[CategoryOut]
+
+
 class SupplierCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -175,6 +179,10 @@ class SupplierOut(BaseModel):
     notes: str | None
     is_archived: bool
     created_at: datetime
+
+
+class SupplierListOut(BaseModel):
+    suppliers: list[SupplierOut]
 
 
 class ProductCreate(BaseModel):
@@ -222,6 +230,13 @@ class ProductOut(BaseModel):
     updated_at: datetime
     category: NamedReferenceOut
     supplier: NamedReferenceOut | None
+
+
+class ProductListOut(BaseModel):
+    products: list[ProductOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class ProductListQuery(BaseModel):

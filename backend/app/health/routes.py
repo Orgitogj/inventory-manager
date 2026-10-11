@@ -1,15 +1,16 @@
-from flask import Blueprint, jsonify
+from typing import Literal
 
-health_bp = Blueprint(
-    "health",
-    __name__,
-    url_prefix="/api/v1",
-)
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+router = APIRouter(prefix="/api/v1", tags=["health"])
 
 
-@health_bp.get("/health")
-def health():
-    return jsonify(
-        status="ok",
-        service="inventory-api",
-    ), 200
+class HealthOut(BaseModel):
+    status: Literal["ok"]
+    service: str
+
+
+@router.get("/health", response_model=HealthOut)
+def health() -> HealthOut:
+    return HealthOut(status="ok", service="inventory-api")

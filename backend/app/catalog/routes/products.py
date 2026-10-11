@@ -1,13 +1,12 @@
 import uuid
+from typing import Annotated
 
-from flask import Blueprint, jsonify, request
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, Query
 
-from app.api import request_payload, validation_error_response
-from app.auth.decorators import login_required, require_role
-from app.catalog.models import Product
+from app.auth.dependencies import current_session, require_role
 from app.catalog.schemas import (
     ProductCreate,
+    ProductListOut,
     ProductListQuery,
     ProductOut,
     ProductUpdate,
@@ -21,109 +20,84 @@ from app.catalog.service import (
     list_products,
     update_product,
 )
-from app.database import get_db
-from app.errors import error_response
+from app.database import DbSession
+from app.errors import ApiError
 from app.users.models import UserRole
 
-products_bp = Blueprint("products", __name__, url_prefix="/api/v1/products")
+router = APIRouter(prefix="/api/v1/products", tags=["products"])
+
+LOGGED_IN = [Depends(current_session)]
+ADMIN_ONLY = [Depends(require_role(UserRole.ADMIN))]
 
 
-def product_json(product: Product) -> dict:
-    return ProductOut.model_validate(product).model_dump(mode="json")
+def not_found() -> ApiError:
+    return ApiError(404, "not_found", "Product not found.")
 
 
-def not_found_response():
-    return error_response("not_found", "Product not found.", 404)
+def sku_taken() -> ApiError:
+    return ApiError(409, "sku_taken", "A product with this SKU already exists.")
 
 
-def sku_taken_response():
-    return error_response("sku_taken", "A product with this SKU already exists.", 409)
-
-
-def reference_error_response(
+def reference_error(
     code: str, error: InvalidReferenceError | ArchivedReferenceError
-):
+) -> ApiError:
     message = str(error)
-    return error_response(
-        code, message, 422, [{"field": error.field, "message": message}]
-    )
+    return ApiError(422, code, message, [{"field": error.field, "message": message}])
 
 
-@products_bp.get("")
-@login_required
-def list_all():
-    try:
-        filters = ProductListQuery.model_validate(request.args.to_dict())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    products, total = list_products(get_db(), filters)
-    return jsonify(
-        products=[product_json(product) for product in products],
+@router.get("", response_model=ProductListOut, dependencies=LOGGED_IN)
+def list_all(
+    filters: Annotated[ProductListQuery, Query()], db: DbSession
+) -> ProductListOut:
+    products, total = list_products(db, filters)
+    return ProductListOut(
+        products=[ProductOut.model_validate(product) for product in products],
         total=total,
         limit=filters.limit,
         offset=filters.offset,
     )
 
 
-@products_bp.get("/<uuid:product_id>")
-@login_required
-def get_one(product_id: uuid.UUID):
-    product = get_product(get_db(), product_id)
-
-    if product is None:
-        return not_found_response()
-
-    return jsonify(product_json(product))
-
-
-@products_bp.post("")
-@login_required
-@require_role(UserRole.ADMIN)
-def create():
-    try:
-        data = ProductCreate.model_validate(request_payload())
-    except ValidationError as error:
-        return validation_error_response(error)
-
-    db = get_db()
-
-    try:
-        product = create_product(db, data)
-    except InvalidReferenceError as error:
-        return reference_error_response("invalid_reference", error)
-    except ArchivedReferenceError as error:
-        return reference_error_response("archived_reference", error)
-    except SkuTakenError:
-        return sku_taken_response()
-
-    db.commit()
-    return jsonify(product_json(product)), 201
-
-
-@products_bp.patch("/<uuid:product_id>")
-@login_required
-@require_role(UserRole.ADMIN)
-def update(product_id: uuid.UUID):
-    db = get_db()
+@router.get("/{product_id}", response_model=ProductOut, dependencies=LOGGED_IN)
+def get_one(product_id: uuid.UUID, db: DbSession) -> ProductOut:
     product = get_product(db, product_id)
 
     if product is None:
-        return not_found_response()
+        raise not_found()
 
+    return ProductOut.model_validate(product)
+
+
+@router.post("", response_model=ProductOut, status_code=201, dependencies=ADMIN_ONLY)
+def create(data: ProductCreate, db: DbSession) -> ProductOut:
     try:
-        data = ProductUpdate.model_validate(request_payload())
-    except ValidationError as error:
-        return validation_error_response(error)
+        product = create_product(db, data)
+    except InvalidReferenceError as error:
+        raise reference_error("invalid_reference", error) from None
+    except ArchivedReferenceError as error:
+        raise reference_error("archived_reference", error) from None
+    except SkuTakenError:
+        raise sku_taken() from None
+
+    db.commit()
+    return ProductOut.model_validate(product)
+
+
+@router.patch("/{product_id}", response_model=ProductOut, dependencies=ADMIN_ONLY)
+def update(product_id: uuid.UUID, data: ProductUpdate, db: DbSession) -> ProductOut:
+    product = get_product(db, product_id)
+
+    if product is None:
+        raise not_found()
 
     try:
         update_product(db, product, data)
     except InvalidReferenceError as error:
-        return reference_error_response("invalid_reference", error)
+        raise reference_error("invalid_reference", error) from None
     except ArchivedReferenceError as error:
-        return reference_error_response("archived_reference", error)
+        raise reference_error("archived_reference", error) from None
     except SkuTakenError:
-        return sku_taken_response()
+        raise sku_taken() from None
 
     db.commit()
-    return jsonify(product_json(product))
+    return ProductOut.model_validate(product)

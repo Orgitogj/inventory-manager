@@ -1,8 +1,8 @@
 import uuid
 
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app import create_app
@@ -24,15 +24,15 @@ PASSWORD_MESSAGE = "Password must be between 12 and 128 characters."
 
 
 @pytest.fixture
-def app(db_session_factory) -> Flask:
+def app(db_session_factory) -> FastAPI:
     app = create_app(Settings(app_env="testing", database_url=None, _env_file=None))
-    app.extensions["database_sessionmaker"] = db_session_factory
+    app.state.session_factory = db_session_factory
     return app
 
 
 @pytest.fixture
-def client(app: Flask) -> FlaskClient:
-    return app.test_client()
+def client(app: FastAPI) -> TestClient:
+    return TestClient(app)
 
 
 def add_user(db_session, email: str, role: UserRole, full_name: str = "Staff") -> User:
@@ -49,16 +49,16 @@ def admin(db_session) -> User:
     return add_user(db_session, ADMIN_EMAIL, UserRole.ADMIN, "Admin")
 
 
-def login(client: FlaskClient, email: str) -> dict[str, str]:
+def login(client: TestClient, email: str) -> dict[str, str]:
     response = client.post(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
-    assert response.status_code == 200, response.get_json()
-    return {"X-CSRF-Token": response.get_json()["csrf_token"]}
+    assert response.status_code == 200, response.json()
+    return {"X-CSRF-Token": response.json()["csrf_token"]}
 
 
 @pytest.fixture
-def csrf(client: FlaskClient, admin: User) -> dict[str, str]:
+def csrf(client: TestClient, admin: User) -> dict[str, str]:
     return login(client, ADMIN_EMAIL)
 
 
@@ -78,7 +78,7 @@ def user_url(user_id) -> str:
 
 
 def error_code(response) -> str:
-    return response.get_json()["error"]["code"]
+    return response.json()["error"]["code"]
 
 
 def count_users(db_session) -> int:
@@ -124,21 +124,21 @@ def test_admin_creates_staff(app, client, csrf, db_session):
     )
 
     assert response.status_code == 201
-    body = response.get_json()
+    body = response.json()
     assert set(body) == {"id", "email", "full_name", "role", "is_active", "created_at"}
     assert body["email"] == "vera@shop.al"
     assert body["full_name"] == "Vera"
     assert body["role"] == "warehouse"
     assert body["is_active"] is True
-    assert PASSWORD not in response.get_data(as_text=True)
+    assert PASSWORD not in response.text
 
     stored = db_session.get(User, uuid.UUID(body["id"]))
     assert stored.email == "vera@shop.al"
     assert stored.password_hash != PASSWORD
     assert verify_password(stored.password_hash, PASSWORD)
-    assert stored.password_hash not in response.get_data(as_text=True)
+    assert stored.password_hash not in response.text
 
-    login(app.test_client(), "vera@shop.al")
+    login(TestClient(app), "vera@shop.al")
 
 
 def test_duplicate_email_is_a_conflict(client, csrf, db_session):
@@ -159,12 +159,12 @@ def test_short_password_is_rejected_without_echoing_it(client, csrf, db_session)
     )
 
     assert response.status_code == 422
-    assert response.get_json()["error"] == {
+    assert response.json()["error"] == {
         "code": "validation_error",
         "message": "Invalid input.",
         "details": [{"field": "password", "message": PASSWORD_MESSAGE}],
     }
-    assert "short-pw" not in response.get_data(as_text=True)
+    assert "short-pw" not in response.text
     assert count_users(db_session) == 1
 
 
@@ -176,7 +176,7 @@ def test_invalid_fields_are_reported_without_input_values(client, csrf, db_sessi
     )
 
     assert response.status_code == 422
-    details = response.get_json()["error"]["details"]
+    details = response.json()["error"]["details"]
     assert {detail["field"] for detail in details} == {
         "email",
         "full_name",
@@ -184,7 +184,7 @@ def test_invalid_fields_are_reported_without_input_values(client, csrf, db_sessi
         "role",
     }
     assert all(set(detail) == {"field", "message"} for detail in details)
-    assert "secret-pw" not in response.get_data(as_text=True)
+    assert "secret-pw" not in response.text
     assert count_users(db_session) == 1
 
 
@@ -202,10 +202,10 @@ def test_list_returns_all_users_without_password_hash(client, csrf, admin, db_se
     response = client.get(USERS_URL)
 
     assert response.status_code == 200
-    users = response.get_json()["users"]
+    users = response.json()["users"]
     assert {user["id"] for user in users} == {str(admin.id), str(other.id)}
     assert all("password_hash" not in user for user in users)
-    assert admin.password_hash not in response.get_data(as_text=True)
+    assert admin.password_hash not in response.text
 
 
 def test_get_returns_one_user(client, csrf, db_session):
@@ -214,7 +214,7 @@ def test_get_returns_one_user(client, csrf, db_session):
     response = client.get(user_url(other.id))
 
     assert response.status_code == 200
-    body = response.get_json()
+    body = response.json()
     assert body["id"] == str(other.id)
     assert body["email"] == "vera@shop.al"
     assert body["role"] == "sales"
@@ -242,8 +242,8 @@ def test_admin_changes_name_and_role_of_another_user(client, csrf, db_session):
     )
 
     assert response.status_code == 200
-    assert response.get_json()["full_name"] == "Vera Hoxha"
-    assert response.get_json()["role"] == "sales"
+    assert response.json()["full_name"] == "Vera Hoxha"
+    assert response.json()["role"] == "sales"
 
     db_session.refresh(other)
     assert other.full_name == "Vera Hoxha"
@@ -253,8 +253,8 @@ def test_admin_changes_name_and_role_of_another_user(client, csrf, db_session):
 
 def test_deactivation_logs_the_user_out_everywhere(app, client, csrf, db_session):
     other = add_user(db_session, "vera@shop.al", UserRole.WAREHOUSE, "Vera")
-    phone = app.test_client()
-    laptop = app.test_client()
+    phone = TestClient(app)
+    laptop = TestClient(app)
     login(phone, "vera@shop.al")
     login(laptop, "vera@shop.al")
     assert phone.get(ME_URL).status_code == 200
@@ -263,13 +263,13 @@ def test_deactivation_logs_the_user_out_everywhere(app, client, csrf, db_session
     response = client.patch(user_url(other.id), json={"is_active": False}, headers=csrf)
 
     assert response.status_code == 200
-    assert response.get_json()["is_active"] is False
+    assert response.json()["is_active"] is False
     assert count_sessions(db_session, other) == 0
     assert phone.get(ME_URL).status_code == 401
     assert laptop.get(ME_URL).status_code == 401
     assert client.get(ME_URL).status_code == 200
 
-    retry = app.test_client().post(
+    retry = TestClient(app).post(
         "/api/v1/auth/login", json={"email": "vera@shop.al", "password": PASSWORD}
     )
     assert retry.status_code == 401
@@ -294,9 +294,9 @@ def test_invalid_update_is_rejected(client, csrf, db_session, payload, field):
 
     assert response.status_code == 422
     assert error_code(response) == "validation_error"
-    details = response.get_json()["error"]["details"]
+    details = response.json()["error"]["details"]
     assert [detail["field"] for detail in details] == [field]
-    assert "another-long-password" not in response.get_data(as_text=True)
+    assert "another-long-password" not in response.text
 
 
 def test_update_requires_csrf_token(client, csrf, db_session):
@@ -332,7 +332,7 @@ def test_admin_can_change_their_own_name(client, csrf, admin):
     )
 
     assert response.status_code == 200
-    assert response.get_json()["full_name"] == "New Name"
+    assert response.json()["full_name"] == "New Name"
 
 
 @pytest.mark.parametrize("payload", [{"is_active": False}, {"role": "warehouse"}])
@@ -370,13 +370,13 @@ def test_last_admin_error_is_reported_as_a_conflict(
 
 def test_one_of_two_admins_can_demote_the_other(app, client, csrf, db_session):
     other = add_user(db_session, "second@shop.al", UserRole.ADMIN)
-    other_client = app.test_client()
+    other_client = TestClient(app)
     login(other_client, "second@shop.al")
     assert other_client.get(USERS_URL).status_code == 200
 
     response = client.patch(user_url(other.id), json={"role": "sales"}, headers=csrf)
 
     assert response.status_code == 200
-    assert response.get_json()["role"] == "sales"
+    assert response.json()["role"] == "sales"
     assert other_client.get(ME_URL).status_code == 200
     assert other_client.get(USERS_URL).status_code == 403
