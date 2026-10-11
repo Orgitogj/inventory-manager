@@ -1,8 +1,10 @@
-from flask import Blueprint, Response, current_app, g, jsonify, request
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import ValidationError
 
-from app.auth.decorators import login_required
-from app.auth.schemas import LoginRequest
+from app.auth.dependencies import CurrentSession
+from app.auth.schemas import LoginRequest, SessionOut
 from app.auth.service import (
     InvalidCredentialsError,
     IssuedSession,
@@ -11,83 +13,103 @@ from app.auth.service import (
     find_active_session,
     start_session,
 )
-from app.database import get_db
-from app.errors import error_response
+from app.database import DbSession
+from app.errors import ApiError
 from app.users.schemas import UserOut
 
-auth_bp = Blueprint("auth", __name__, url_prefix="/api/v1/auth")
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
-def set_session_cookie(response: Response, issued: IssuedSession) -> None:
+def set_session_cookie(
+    request: Request, response: Response, issued: IssuedSession
+) -> None:
+    state = request.app.state
     response.set_cookie(
-        current_app.config["AUTH_COOKIE_NAME"],
+        state.cookie_name,
         issued.token,
-        max_age=int(current_app.config["AUTH_SESSION_LIFETIME"].total_seconds()),
+        max_age=int(state.session_lifetime.total_seconds()),
         httponly=True,
-        secure=current_app.config["AUTH_COOKIE_SECURE"],
+        secure=state.cookie_secure,
         samesite="Lax",
         path="/",
     )
 
 
-def clear_session_cookie(response: Response) -> None:
+def clear_session_cookie(request: Request, response: Response) -> None:
+    state = request.app.state
     response.delete_cookie(
-        current_app.config["AUTH_COOKIE_NAME"],
+        state.cookie_name,
         path="/",
         httponly=True,
-        secure=current_app.config["AUTH_COOKIE_SECURE"],
+        secure=state.cookie_secure,
         samesite="Lax",
     )
 
 
-@auth_bp.post("/login")
-def login():
+async def json_body(request: Request) -> Any:
     try:
-        data = LoginRequest.model_validate(request.get_json(silent=True) or {})
-    except ValidationError:
-        return error_response(
-            "invalid_request", "Email and password are required.", 400
-        )
+        return await request.json()
+    except ValueError:
+        return None
 
-    db = get_db()
+
+LOGIN_REQUEST_BODY = {
+    "requestBody": {
+        "required": True,
+        "content": {"application/json": {"schema": LoginRequest.model_json_schema()}},
+    }
+}
+
+
+@router.post("/login", response_model=SessionOut, openapi_extra=LOGIN_REQUEST_BODY)
+def login(
+    request: Request,
+    response: Response,
+    db: DbSession,
+    payload: Annotated[Any, Depends(json_body)],
+) -> SessionOut:
+    try:
+        data = LoginRequest.model_validate(payload or {})
+    except ValidationError:
+        raise ApiError(
+            400, "invalid_request", "Email and password are required."
+        ) from None
 
     try:
         user = authenticate(db, data.email, data.password.get_secret_value())
     except InvalidCredentialsError:
-        return error_response("invalid_credentials", "Invalid email or password.", 401)
+        raise ApiError(
+            401, "invalid_credentials", "Invalid email or password."
+        ) from None
 
-    old_token = request.cookies.get(current_app.config["AUTH_COOKIE_NAME"])
+    state = request.app.state
+    old_token = request.cookies.get(state.cookie_name)
     old_session = find_active_session(db, old_token) if old_token else None
     if old_session is not None:
         end_session(db, old_session)
 
-    issued = start_session(db, user, current_app.config["AUTH_SESSION_LIFETIME"])
+    issued = start_session(db, user, state.session_lifetime)
     db.commit()
 
-    response = jsonify(
-        user=UserOut.model_validate(user).model_dump(mode="json"),
-        csrf_token=issued.csrf_token,
-    )
-    set_session_cookie(response, issued)
-    return response, 200
+    set_session_cookie(request, response, issued)
+    return SessionOut(user=UserOut.model_validate(user), csrf_token=issued.csrf_token)
 
 
-@auth_bp.post("/logout")
-@login_required
-def logout():
-    db = get_db()
-    end_session(db, g.user_session)
+@router.post("/logout", status_code=204, response_class=Response)
+def logout(
+    request: Request,
+    response: Response,
+    db: DbSession,
+    user_session: CurrentSession,
+) -> None:
+    end_session(db, user_session)
     db.commit()
-
-    response = Response(status=204)
-    clear_session_cookie(response)
-    return response
+    clear_session_cookie(request, response)
 
 
-@auth_bp.get("/me")
-@login_required
-def me():
-    return jsonify(
-        user=UserOut.model_validate(g.current_user).model_dump(mode="json"),
-        csrf_token=g.user_session.csrf_token,
+@router.get("/me", response_model=SessionOut)
+def me(user_session: CurrentSession) -> SessionOut:
+    return SessionOut(
+        user=UserOut.model_validate(user_session.user),
+        csrf_token=user_session.csrf_token,
     )
