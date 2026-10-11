@@ -1,9 +1,9 @@
 import pytest
-from flask import Flask
+from click.testing import CliRunner
 from sqlalchemy import select
 
-from app import create_app
 from app.auth.passwords import verify_password
+from app.cli import cli
 from app.config import Settings
 from app.users.models import User, UserRole
 
@@ -11,26 +11,24 @@ PASSWORD = "long-enough-password"
 ARGS = ["create-admin", "--email", " Boss@Shop.AL ", "--full-name", "Boss"]
 
 
-def make_app() -> Flask:
-    return create_app(Settings(app_env="testing", database_url=None, _env_file=None))
+def unconfigured_options() -> dict:
+    return {"settings": Settings(app_env="testing", database_url=None, _env_file=None)}
 
 
 @pytest.fixture
-def cli_app(db_session_factory) -> Flask:
-    app = make_app()
-    app.extensions["database_sessionmaker"] = db_session_factory
-    return app
+def cli_options(db_session_factory) -> dict:
+    return {"session_factory": db_session_factory}
 
 
-def run(app: Flask, password: str = PASSWORD, confirmation: str | None = None):
+def run(options: dict, password: str = PASSWORD, confirmation: str | None = None):
     confirmation = password if confirmation is None else confirmation
-    return app.test_cli_runner().invoke(
-        args=ARGS, input=f"{password}\n{confirmation}\n"
+    return CliRunner().invoke(
+        cli, ARGS, input=f"{password}\n{confirmation}\n", obj=options
     )
 
 
 def test_fails_cleanly_when_database_is_not_configured():
-    result = make_app().test_cli_runner().invoke(args=ARGS)
+    result = CliRunner().invoke(cli, ARGS, obj=unconfigured_options())
 
     assert result.exit_code != 0
     assert "Database is not configured" in result.output
@@ -38,8 +36,8 @@ def test_fails_cleanly_when_database_is_not_configured():
 
 
 @pytest.mark.db
-def test_creates_the_first_admin(cli_app, db_session):
-    result = run(cli_app)
+def test_creates_the_first_admin(cli_options, db_session):
+    result = run(cli_options)
 
     assert result.exit_code == 0, result.output
     assert "Admin created: boss@shop.al" in result.output
@@ -55,11 +53,13 @@ def test_creates_the_first_admin(cli_app, db_session):
 
 
 @pytest.mark.db
-def test_refuses_when_an_admin_already_exists(cli_app, db_session):
-    assert run(cli_app).exit_code == 0
+def test_refuses_when_an_admin_already_exists(cli_options, db_session):
+    assert run(cli_options).exit_code == 0
 
-    result = cli_app.test_cli_runner().invoke(
-        args=["create-admin", "--email", "second@shop.al", "--full-name", "Second"]
+    result = CliRunner().invoke(
+        cli,
+        ["create-admin", "--email", "second@shop.al", "--full-name", "Second"],
+        obj=cli_options,
     )
 
     assert result.exit_code != 0
@@ -69,8 +69,8 @@ def test_refuses_when_an_admin_already_exists(cli_app, db_session):
 
 
 @pytest.mark.db
-def test_rejects_a_short_password_without_echoing_it(cli_app, db_session):
-    result = run(cli_app, password="short-pw")
+def test_rejects_a_short_password_without_echoing_it(cli_options, db_session):
+    result = run(cli_options, password="short-pw")
 
     assert result.exit_code != 0
     assert "password:" in result.output
@@ -80,10 +80,12 @@ def test_rejects_a_short_password_without_echoing_it(cli_app, db_session):
 
 
 @pytest.mark.db
-def test_reprompts_when_confirmation_does_not_match(cli_app, db_session):
-    result = cli_app.test_cli_runner().invoke(
-        args=ARGS,
+def test_reprompts_when_confirmation_does_not_match(cli_options, db_session):
+    result = CliRunner().invoke(
+        cli,
+        ARGS,
         input=f"{PASSWORD}\nsomething-else-entirely\n{PASSWORD}\n{PASSWORD}\n",
+        obj=cli_options,
     )
 
     assert result.exit_code == 0, result.output
