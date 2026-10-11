@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from app.auth.routes import router as auth_router
 from app.catalog.routes import categories_router, products_router, suppliers_router
 from app.config import Settings
+from app.customers.routes import router as customers_router
 from app.database import build_engine
 from app.errors import register_error_handlers
 from app.health.routes import router as health_router
@@ -35,5 +36,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(suppliers_router)
     app.include_router(products_router)
     app.include_router(inventory_router)
+    app.include_router(customers_router)
 
     return app
