@@ -7,6 +7,7 @@ from app.catalog.routes import categories_bp, products_bp, suppliers_bp
 from app.config import Settings
 from app.database import init_database
 from app.health.routes import health_bp
+from app.inventory.routes import inventory_bp
 from app.users.cli import create_admin
 from app.users.routes import users_bp
 
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.register_blueprint(categories_bp)
     app.register_blueprint(suppliers_bp)
     app.register_blueprint(products_bp)
+    app.register_blueprint(inventory_bp)
     app.cli.add_command(create_admin)
 
     return app
