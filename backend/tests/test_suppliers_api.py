@@ -1,6 +1,6 @@
 import pytest
-from flask import Flask
-from flask.testing import FlaskClient
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
@@ -22,33 +22,33 @@ INSERT = text(
 
 
 @pytest.fixture
-def app(db_session_factory) -> Flask:
+def app(db_session_factory) -> FastAPI:
     app = create_app(Settings(app_env="testing", database_url=None, _env_file=None))
-    app.extensions["database_sessionmaker"] = db_session_factory
+    app.state.session_factory = db_session_factory
     return app
 
 
-def logged_in(app: Flask, db_session, email: str, role: UserRole):
+def logged_in(app: FastAPI, db_session, email: str, role: UserRole):
     create_user(
         db_session,
         StaffCreate(email=email, full_name="Staff", password=PASSWORD, role=role),
     )
     db_session.commit()
 
-    client = app.test_client()
+    client = TestClient(app)
     response = client.post(
         "/api/v1/auth/login", json={"email": email, "password": PASSWORD}
     )
-    return client, {"X-CSRF-Token": response.get_json()["csrf_token"]}
+    return client, {"X-CSRF-Token": response.json()["csrf_token"]}
 
 
 @pytest.fixture
-def admin(app, db_session) -> tuple[FlaskClient, dict[str, str]]:
+def admin(app, db_session) -> tuple[TestClient, dict[str, str]]:
     return logged_in(app, db_session, "admin@shop.al", UserRole.ADMIN)
 
 
 @pytest.fixture
-def warehouse(app, db_session) -> tuple[FlaskClient, dict[str, str]]:
+def warehouse(app, db_session) -> tuple[TestClient, dict[str, str]]:
     return logged_in(app, db_session, "ana@shop.al", UserRole.WAREHOUSE)
 
 
@@ -63,11 +63,11 @@ def patch(admin, supplier_id: str, **payload):
 
 
 def error_code(response) -> str:
-    return response.get_json()["error"]["code"]
+    return response.json()["error"]["code"]
 
 
 def names(response) -> list[str]:
-    return [supplier["name"] for supplier in response.get_json()["suppliers"]]
+    return [supplier["name"] for supplier in response.json()["suppliers"]]
 
 
 def test_admin_creates_a_supplier_with_cleaned_values(admin):
@@ -80,7 +80,7 @@ def test_admin_creates_a_supplier_with_cleaned_values(admin):
     )
 
     assert response.status_code == 201
-    body = response.get_json()
+    body = response.json()
     assert set(body) == {
         "id",
         "name",
@@ -116,18 +116,18 @@ def test_invalid_input_returns_field_details_without_the_input(admin):
 
     assert response.status_code == 422
     assert error_code(response) == "validation_error"
-    details = response.get_json()["error"]["details"]
+    details = response.json()["error"]["details"]
     assert {detail["field"] for detail in details} == {"name", "email"}
     assert all(set(detail) == {"field", "message"} for detail in details)
-    assert "not-an-email" not in response.get_data(as_text=True)
+    assert "not-an-email" not in response.text
 
 
 def test_staff_can_read_but_not_write(admin, warehouse):
-    alfa = create(admin, name="Alfa").get_json()
+    alfa = create(admin, name="Alfa").json()
     client, csrf = warehouse
 
     assert names(client.get(SUPPLIERS_URL)) == ["Alfa"]
-    assert client.get(f"{SUPPLIERS_URL}/{alfa['id']}").get_json()["name"] == "Alfa"
+    assert client.get(f"{SUPPLIERS_URL}/{alfa['id']}").json()["name"] == "Alfa"
 
     created = client.post(SUPPLIERS_URL, json={"name": "Beta"}, headers=csrf)
     assert created.status_code == 403
@@ -140,7 +140,7 @@ def test_staff_can_read_but_not_write(admin, warehouse):
 
 
 def test_anonymous_user_gets_401(app):
-    client = app.test_client()
+    client = TestClient(app)
 
     assert client.get(SUPPLIERS_URL).status_code == 401
     assert client.get(f"{SUPPLIERS_URL}/{UNKNOWN_ID}").status_code == 401
@@ -167,12 +167,12 @@ def test_list_is_sorted_by_name_ignoring_case(admin):
 
 def test_archived_suppliers_are_hidden_by_default(admin):
     client, _ = admin
-    alfa = create(admin, name="Alfa").get_json()
+    alfa = create(admin, name="Alfa").json()
     create(admin, name="Beta")
 
     response = patch(admin, alfa["id"], is_archived=True)
     assert response.status_code == 200
-    assert response.get_json()["is_archived"] is True
+    assert response.json()["is_archived"] is True
 
     assert names(client.get(SUPPLIERS_URL)) == ["Beta"]
     assert names(client.get(f"{SUPPLIERS_URL}?include_archived=true")) == [
@@ -185,22 +185,22 @@ def test_archived_suppliers_are_hidden_by_default(admin):
 def test_rename_to_an_existing_name_is_rejected(admin):
     client, _ = admin
     create(admin, name="Alfa")
-    beta = create(admin, name="Beta").get_json()
+    beta = create(admin, name="Beta").json()
 
     response = patch(admin, beta["id"], name="alfa")
 
     assert response.status_code == 409
     assert error_code(response) == "name_taken"
-    assert client.get(f"{SUPPLIERS_URL}/{beta['id']}").get_json()["name"] == "Beta"
+    assert client.get(f"{SUPPLIERS_URL}/{beta['id']}").json()["name"] == "Beta"
 
 
 def test_supplier_can_be_renamed_to_a_different_case_of_its_own_name(admin):
-    alfa = create(admin, name="alfa").get_json()
+    alfa = create(admin, name="alfa").json()
 
     response = patch(admin, alfa["id"], name="ALFA")
 
     assert response.status_code == 200
-    assert response.get_json()["name"] == "ALFA"
+    assert response.json()["name"] == "ALFA"
 
 
 def test_unknown_supplier_returns_404(admin):
@@ -209,7 +209,7 @@ def test_unknown_supplier_returns_404(admin):
     found = client.get(f"{SUPPLIERS_URL}/{UNKNOWN_ID}")
     assert found.status_code == 404
     assert error_code(found) == "not_found"
-    assert found.get_json()["error"]["message"] == "Supplier not found."
+    assert found.json()["error"]["message"] == "Supplier not found."
 
     assert patch(admin, UNKNOWN_ID, name="X").status_code == 404
 
@@ -218,12 +218,12 @@ def test_null_clears_optional_fields_and_keeps_the_rest(admin):
     client, _ = admin
     alfa = create(
         admin, name="Alfa", email="info@alfa.al", phone="069", notes="Shënim"
-    ).get_json()
+    ).json()
 
     response = patch(admin, alfa["id"], email=None)
 
     assert response.status_code == 200
-    stored = client.get(f"{SUPPLIERS_URL}/{alfa['id']}").get_json()
+    stored = client.get(f"{SUPPLIERS_URL}/{alfa['id']}").json()
     assert stored["email"] is None
     assert stored["phone"] == "069"
     assert stored["notes"] == "Shënim"
@@ -231,12 +231,12 @@ def test_null_clears_optional_fields_and_keeps_the_rest(admin):
 
 
 def test_update_normalizes_the_email(admin):
-    alfa = create(admin, name="Alfa").get_json()
+    alfa = create(admin, name="Alfa").json()
 
     response = patch(admin, alfa["id"], email="  Sales@Alfa.AL ")
 
     assert response.status_code == 200
-    assert response.get_json()["email"] == "sales@alfa.al"
+    assert response.json()["email"] == "sales@alfa.al"
 
 
 @pytest.mark.parametrize(
@@ -251,12 +251,12 @@ def test_update_normalizes_the_email(admin):
     ],
 )
 def test_invalid_update_is_rejected(admin, payload, field):
-    alfa = create(admin, name="Alfa", email="info@alfa.al").get_json()
+    alfa = create(admin, name="Alfa", email="info@alfa.al").json()
 
     response = patch(admin, alfa["id"], **payload)
 
     assert response.status_code == 422
-    details = response.get_json()["error"]["details"]
+    details = response.json()["error"]["details"]
     assert [detail["field"] for detail in details] == [field]
 
 
