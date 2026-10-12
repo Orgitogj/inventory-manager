@@ -31,10 +31,11 @@ class InvalidQuantityError(Exception):
 
 
 class InsufficientStockError(Exception):
-    def __init__(self, available: int, requested: int) -> None:
+    def __init__(self, product_id: uuid.UUID, available: int, requested: int) -> None:
         super().__init__(
             f"Not enough stock: {available} available, {requested} requested."
         )
+        self.product_id = product_id
         self.available = available
         self.requested = requested
 
@@ -73,6 +74,7 @@ def record_movement(
     quantity: int,
     actor_id: uuid.UUID,
     reason: str | None = None,
+    order_id: uuid.UUID | None = None,
 ) -> StockMovement:
     change = signed_change(kind, quantity)
     product = session.get(Product, product_id)
@@ -87,7 +89,9 @@ def record_movement(
     new_quantity = stock.quantity + change
 
     if new_quantity < 0:
-        raise InsufficientStockError(available=stock.quantity, requested=-change)
+        raise InsufficientStockError(
+            product_id=product_id, available=stock.quantity, requested=-change
+        )
 
     stock.quantity = new_quantity
     movement = StockMovement(
@@ -97,6 +101,7 @@ def record_movement(
         quantity_after=new_quantity,
         reason=reason,
         created_by_id=actor_id,
+        order_id=order_id,
     )
     session.add(movement)
     session.flush()
