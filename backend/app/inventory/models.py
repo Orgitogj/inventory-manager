@@ -49,6 +49,7 @@ class StockMovement(Base):
             name="adjustment_has_reason",
         ),
         Index("ix_stock_movements_product_id_created_at", "product_id", "created_at"),
+        Index("ix_stock_movements_order_id", "order_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -70,6 +71,10 @@ class StockMovement(Base):
     reason: Mapped[str | None] = mapped_column(String(500))
     created_by_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+    order_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("orders.id", ondelete="RESTRICT")
     )
 
     created_at: Mapped[datetime] = mapped_column(
