@@ -3,6 +3,7 @@ from datetime import timedelta
 from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 
+from app import models
 from app.auth.routes import router as auth_router
 from app.catalog.routes import categories_router, products_router, suppliers_router
 from app.config import Settings
@@ -39,3 +40,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(customers_router)
 
     return app
+
+
+__all__ = ["create_app", "models"]
