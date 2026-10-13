@@ -13,6 +13,7 @@ from app.database import build_engine
 from app.errors import register_error_handlers
 from app.health.routes import router as health_router
 from app.inventory.routes import router as inventory_router
+from app.middleware import UnhandledErrorMiddleware
 from app.orders.routes import router as orders_router
 from app.users.routes import router as users_router
 
@@ -40,6 +41,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_lifetime = timedelta(hours=settings.session_lifetime_hours)
     app.state.engine = engine
     app.state.session_factory = sessionmaker(bind=engine) if engine else None
+
+    app.add_middleware(UnhandledErrorMiddleware)
 
     if settings.cors_origins:
         app.add_middleware(

@@ -1,7 +1,14 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException
+
+from app.database import DatabaseNotConfiguredError
+
+logger = logging.getLogger(__name__)
 
 REQUEST_LOCATIONS = frozenset({"body", "query", "path"})
 HTTP_ERROR_CODES = {404: "not_found", 405: "method_not_allowed"}
@@ -68,7 +75,23 @@ async def handle_http_error(_request: Request, error: HTTPException) -> JSONResp
     return error_response(error.status_code, code, str(error.detail))
 
 
+async def handle_unavailable_service(
+    request: Request, error: Exception
+) -> JSONResponse:
+    logger.exception(
+        "Database unavailable during %s %s",
+        request.method,
+        request.url.path,
+        exc_info=error,
+    )
+    return error_response(
+        503, "service_unavailable", "The service is temporarily unavailable."
+    )
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ApiError, handle_api_error)
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(HTTPException, handle_http_error)
+    app.add_exception_handler(OperationalError, handle_unavailable_service)
+    app.add_exception_handler(DatabaseNotConfiguredError, handle_unavailable_service)

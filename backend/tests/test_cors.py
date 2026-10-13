@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app import create_app
 from app.config import Settings
+from app.middleware import UnhandledErrorMiddleware
 
 ORIGIN = "http://localhost:3000"
 HEALTH_URL = "/api/v1/health"
@@ -96,4 +97,7 @@ def test_cors_middleware_is_added_with_configured_origins():
     settings = Settings(app_env="testing", cors_origins=[ORIGIN], _env_file=None)
     app = create_app(settings)
 
-    assert [middleware.cls for middleware in app.user_middleware] == [CORSMiddleware]
+    assert [middleware.cls for middleware in app.user_middleware] == [
+        CORSMiddleware,
+        UnhandledErrorMiddleware,
+    ]
