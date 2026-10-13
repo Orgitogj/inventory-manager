@@ -8,7 +8,13 @@ from app.customers.models import Customer
 from app.inventory.models import MovementKind
 from app.inventory.service import record_movement
 from app.orders.models import Order, OrderItem, OrderStatus
-from app.orders.schemas import OrderCreate, OrderItemIn, OrderItemsReplace, OrderUpdate
+from app.orders.schemas import (
+    OrderCreate,
+    OrderItemIn,
+    OrderItemsReplace,
+    OrderListQuery,
+    OrderUpdate,
+)
 
 
 class InvalidReferenceError(Exception):
@@ -99,6 +105,27 @@ def create_order(session: Session, data: OrderCreate, actor_id: uuid.UUID) -> Or
 
 def get_order(session: Session, order_id: uuid.UUID) -> Order | None:
     return session.get(Order, order_id)
+
+
+def list_orders(session: Session, filters: OrderListQuery) -> tuple[list[Order], int]:
+    conditions = []
+
+    if filters.status is not None:
+        conditions.append(Order.status == filters.status)
+
+    if filters.customer_id is not None:
+        conditions.append(Order.customer_id == filters.customer_id)
+
+    total = session.scalar(select(func.count()).select_from(Order).where(*conditions))
+    orders = session.scalars(
+        select(Order)
+        .where(*conditions)
+        .order_by(Order.number.desc())
+        .limit(filters.limit)
+        .offset(filters.offset)
+    )
+
+    return list(orders), total
 
 
 def lock_order(session: Session, order_id: uuid.UUID) -> Order | None:
