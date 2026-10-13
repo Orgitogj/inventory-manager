@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import FastAPI
@@ -22,6 +24,14 @@ CORS_METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
 CORS_HEADERS = ["Content-Type", "X-CSRF-Token"]
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+
+    if app.state.engine is not None:
+        app.state.engine.dispose()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings if settings is not None else Settings()
     docs_enabled = settings.app_env != "production"
@@ -29,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="Inventory Manager API",
         redirect_slashes=False,
+        lifespan=lifespan,
         docs_url="/docs" if docs_enabled else None,
         redoc_url="/redoc" if docs_enabled else None,
         openapi_url="/openapi.json" if docs_enabled else None,
