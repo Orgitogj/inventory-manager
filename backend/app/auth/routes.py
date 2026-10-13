@@ -15,6 +15,7 @@ from app.auth.service import (
 )
 from app.database import DbSession
 from app.errors import ApiError
+from app.users.models import normalize_email
 from app.users.schemas import UserOut
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -46,6 +47,10 @@ def clear_session_cookie(request: Request, response: Response) -> None:
     )
 
 
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
 async def json_body(request: Request) -> Any:
     try:
         return await request.json()
@@ -75,14 +80,30 @@ def login(
             400, "invalid_request", "Email and password are required."
         ) from None
 
+    state = request.app.state
+    limiter = state.login_rate_limiter
+    ip = client_ip(request)
+    email = normalize_email(data.email)
+
+    retry_after = limiter.retry_after(ip, email)
+    if retry_after is not None:
+        raise ApiError(
+            429,
+            "too_many_attempts",
+            "Too many failed login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     try:
         user = authenticate(db, data.email, data.password.get_secret_value())
     except InvalidCredentialsError:
+        limiter.record_failure(ip, email)
         raise ApiError(
             401, "invalid_credentials", "Invalid email or password."
         ) from None
 
-    state = request.app.state
+    limiter.reset(ip, email)
+
     old_token = request.cookies.get(state.cookie_name)
     old_session = find_active_session(db, old_token) if old_token else None
     if old_session is not None:

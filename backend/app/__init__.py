@@ -1,9 +1,13 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker
 
 from app import models
+from app.auth.rate_limit import LoginRateLimiter
 from app.auth.routes import router as auth_router
 from app.catalog.routes import categories_router, products_router, suppliers_router
 from app.config import Settings
@@ -12,14 +16,34 @@ from app.database import build_engine
 from app.errors import register_error_handlers
 from app.health.routes import router as health_router
 from app.inventory.routes import router as inventory_router
+from app.middleware import UnhandledErrorMiddleware
 from app.orders.routes import router as orders_router
 from app.users.routes import router as users_router
+
+CORS_METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
+CORS_HEADERS = ["Content-Type", "X-CSRF-Token"]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    yield
+
+    if app.state.engine is not None:
+        app.state.engine.dispose()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings if settings is not None else Settings()
+    docs_enabled = settings.app_env != "production"
 
-    app = FastAPI(title="Inventory Manager API", redirect_slashes=False)
+    app = FastAPI(
+        title="Inventory Manager API",
+        redirect_slashes=False,
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
 
     engine = build_engine(settings.database_url) if settings.database_url else None
 
@@ -29,6 +53,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_lifetime = timedelta(hours=settings.session_lifetime_hours)
     app.state.engine = engine
     app.state.session_factory = sessionmaker(bind=engine) if engine else None
+    app.state.login_rate_limiter = LoginRateLimiter(
+        max_attempts=settings.login_max_attempts,
+        max_attempts_per_ip=settings.login_max_attempts_per_ip,
+        window_seconds=settings.login_window_minutes * 60,
+    )
+
+    app.add_middleware(UnhandledErrorMiddleware)
+
+    if settings.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.cors_origins,
+            allow_credentials=True,
+            allow_methods=CORS_METHODS,
+            allow_headers=CORS_HEADERS,
+        )
 
     register_error_handlers(app)
     app.include_router(health_router)
