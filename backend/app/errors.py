@@ -24,23 +24,29 @@ class ApiError(Exception):
         code: str,
         message: str,
         details: ErrorDetails | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.details = details
+        self.headers = headers
 
 
 def error_response(
-    status: int, code: str, message: str, details: ErrorDetails | None = None
+    status: int,
+    code: str,
+    message: str,
+    details: ErrorDetails | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     error: dict[str, object] = {"code": code, "message": message}
 
     if details is not None:
         error["details"] = details
 
-    return JSONResponse({"error": error}, status_code=status)
+    return JSONResponse({"error": error}, status_code=status, headers=headers)
 
 
 def field_name(error_type: str, location: tuple[str | int, ...]) -> str:
@@ -54,7 +60,9 @@ def field_name(error_type: str, location: tuple[str | int, ...]) -> str:
 
 
 async def handle_api_error(_request: Request, error: ApiError) -> JSONResponse:
-    return error_response(error.status, error.code, error.message, error.details)
+    return error_response(
+        error.status, error.code, error.message, error.details, error.headers
+    )
 
 
 async def handle_validation_error(

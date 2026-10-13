@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker
 
 from app import models
+from app.auth.rate_limit import LoginRateLimiter
 from app.auth.routes import router as auth_router
 from app.catalog.routes import categories_router, products_router, suppliers_router
 from app.config import Settings
@@ -41,6 +42,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.session_lifetime = timedelta(hours=settings.session_lifetime_hours)
     app.state.engine = engine
     app.state.session_factory = sessionmaker(bind=engine) if engine else None
+    app.state.login_rate_limiter = LoginRateLimiter(
+        max_attempts=settings.login_max_attempts,
+        max_attempts_per_ip=settings.login_max_attempts_per_ip,
+        window_seconds=settings.login_window_minutes * 60,
+    )
 
     app.add_middleware(UnhandledErrorMiddleware)
 
