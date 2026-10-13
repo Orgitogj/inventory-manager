@@ -1,6 +1,55 @@
 name: inventory-manager
 
+x-api-image: &api-image
+  image: inventory-manager-api
+  build:
+    context: ./backend
+
+x-database-url: &database-url postgresql+psycopg://inventory:inventory_local_dev@db:5432/inventory_dev
+
+x-source-mounts: &source-mounts
+  - ./backend/app:/app/app
+  - ./backend/migrations:/app/migrations
+
 services:
+  migrate:
+    <<: *api-image
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      APP_ENV: development
+      DATABASE_URL: *database-url
+    volumes: *source-mounts
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *api-image
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --reload
+      - --reload-dir
+      - /app/app
+    environment:
+      APP_ENV: development
+      DATABASE_URL: *database-url
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes: *source-mounts
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   db:
     image: postgres:17-alpine
     environment:

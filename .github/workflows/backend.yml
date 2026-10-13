@@ -73,3 +73,15 @@ jobs:
         run: uv run --frozen alembic check
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+  image:
+    name: Build the API image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
+      - name: Build the image
+        run: docker build --tag inventory-api:ci backend
+        working-directory: .
